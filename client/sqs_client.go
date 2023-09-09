@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
@@ -19,7 +20,6 @@ type SQSService interface {
 }
 
 type SQSClientOptions struct {
-	Session                *session.Session
 	QueueName              string
 	Handle                 func(message map[string]interface{}) (bool, error)
 	PollingWaitTimeSeconds int64
@@ -35,6 +35,15 @@ type MessageResponse struct {
 }
 
 func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
+	if sqsService == nil {
+		sess := session.Must(session.NewSessionWithOptions(session.Options{
+			Config: aws.Config{
+				Credentials: credentials.NewCredentials(&credentials.EnvProvider{}),
+			},
+		}))
+		sqsService = sqs.New(sess)
+	}
+
 	return &SQSClient{
 		client:        sqsService,
 		clientOptions: &options,
