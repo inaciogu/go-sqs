@@ -11,6 +11,13 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
+type SQSService interface {
+	GetQueueUrl(input *sqs.GetQueueUrlInput) (*sqs.GetQueueUrlOutput, error)
+	ReceiveMessage(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error)
+	ChangeMessageVisibility(input *sqs.ChangeMessageVisibilityInput) (*sqs.ChangeMessageVisibilityOutput, error)
+	DeleteMessage(input *sqs.DeleteMessageInput) (*sqs.DeleteMessageOutput, error)
+}
+
 type SQSClientOptions struct {
 	Session                *session.Session
 	QueueName              string
@@ -19,7 +26,7 @@ type SQSClientOptions struct {
 }
 
 type SQSClient struct {
-	client        *sqs.SQS
+	client        SQSService
 	clientOptions *SQSClientOptions
 }
 
@@ -27,36 +34,34 @@ type MessageResponse struct {
 	Content string
 }
 
-func New(options SQSClientOptions) *SQSClient {
+func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 	return &SQSClient{
-		client:        sqs.New(options.Session),
+		client:        sqsService,
 		clientOptions: &options,
 	}
 }
 
-func (s *SQSClient) GetQueueUrl() (string, error) {
+// GetQueueUrl returns the URL of the queue based on the queue name
+func (s *SQSClient) GetQueueUrl() *string {
 	urlResult, err := s.client.GetQueueUrl(&sqs.GetQueueUrlInput{
 		QueueName: aws.String(s.clientOptions.QueueName),
 	})
 
 	if err != nil {
-		return "", err
+		panic(err)
 	}
 
-	return *aws.String(*urlResult.QueueUrl), nil
+	return aws.String(*urlResult.QueueUrl)
 }
 
+// ReceiveMessages polls messages from the queue
 func (s *SQSClient) ReceiveMessages() error {
 	fmt.Printf("polling messages from %s\n", s.clientOptions.QueueName)
 
-	queueUrl, err := s.GetQueueUrl()
-
-	if err != nil {
-		return err
-	}
+	queueUrl := s.GetQueueUrl()
 
 	result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
-		QueueUrl:          &queueUrl,
+		QueueUrl:          queueUrl,
 		WaitTimeSeconds:   aws.Int64(20),
 		VisibilityTimeout: aws.Int64(30),
 	})
@@ -72,20 +77,15 @@ func (s *SQSClient) ReceiveMessages() error {
 	return nil
 }
 
+// ProcessMessage Transforms message body and delete it from the queue if it was handled successfully, otherwise, it changes the message visibility
 func (s *SQSClient) ProcessMessage(message *sqs.Message) {
-	queueUrl, err := s.GetQueueUrl()
-
-	if err != nil {
-		fmt.Println(err.Error())
-
-		return
-	}
+	queueUrl := s.GetQueueUrl()
 
 	formattedBody := strings.ReplaceAll(*message.Body, "'", "")
 
 	var messageBody map[string]interface{}
 
-	err = json.Unmarshal([]byte(formattedBody), &messageBody)
+	err := json.Unmarshal([]byte(formattedBody), &messageBody)
 
 	if err != nil {
 		fmt.Println(err.Error())
@@ -101,7 +101,7 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		fmt.Printf("failed to handle message: %s\n", err.Error())
 
 		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
-			QueueUrl:          &queueUrl,
+			QueueUrl:          queueUrl,
 			ReceiptHandle:     message.ReceiptHandle,
 			VisibilityTimeout: aws.Int64(0),
 		})
@@ -111,7 +111,7 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 
 	if handled {
 		s.client.DeleteMessage(&sqs.DeleteMessageInput{
-			QueueUrl:      &queueUrl,
+			QueueUrl:      queueUrl,
 			ReceiptHandle: message.ReceiptHandle,
 		})
 
@@ -119,6 +119,7 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 	}
 }
 
+// Poll calls ReceiveMessages based on the polling wait time
 func (s *SQSClient) Poll() {
 	fmt.Println("starting polling")
 
