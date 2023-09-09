@@ -23,6 +23,8 @@ type SQSClientOptions struct {
 	QueueName              string
 	Handle                 func(message map[string]interface{}) (bool, error)
 	PollingWaitTimeSeconds int64
+	Region                 string
+	Endpoint               string
 }
 
 type SQSClient struct {
@@ -39,6 +41,8 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 		sess := session.Must(session.NewSessionWithOptions(session.Options{
 			Config: aws.Config{
 				Credentials: credentials.NewCredentials(&credentials.EnvProvider{}),
+				Region:      aws.String(options.Region),
+				Endpoint:    aws.String(options.Endpoint),
 			},
 		}))
 		sqsService = sqs.New(sess)
