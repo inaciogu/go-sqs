@@ -116,16 +116,64 @@ func (ut *UnitTest) TestReceiveMessageErrorCase() {
 	})
 }
 
-/* func TestProcessMessage() {
-	mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{
+func (uts *UnitTest) TestProcessMessage_Handled() {
+	uts.mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(mockSQSService, client.SQSClientOptions{
+	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message map[string]interface{}) (bool, error) {
 			return true, nil
 		},
 		PollingWaitTimeSeconds: 20,
 	})
-} */
+
+	message := &sqs.Message{
+		Body:          aws.String(`{"content": "fake-content"}`),
+		ReceiptHandle: aws.String("fake-receipt-handle"),
+	}
+
+	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
+
+	client.ProcessMessage(message)
+
+	uts.mockSQSService.AssertCalled(uts.T(), "DeleteMessage", &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String("https://fake-queue-url"),
+		ReceiptHandle: aws.String("fake-receipt-handle"),
+	})
+}
+
+func (uts *UnitTest) TestProcessMessage_Not_Handled() {
+	uts.mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{
+		QueueUrl: aws.String("https://fake-queue-url"),
+	}, nil)
+
+	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+		Handle: func(message map[string]interface{}) (bool, error) {
+			return false, errors.New("fake-error")
+		},
+		PollingWaitTimeSeconds: 20,
+	})
+
+	message := &sqs.Message{
+		Body:          aws.String(`{"content": "fake-content"}`),
+		ReceiptHandle: aws.String("fake-receipt-handle"),
+	}
+
+	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
+	uts.mockSQSService.On("ChangeMessageVisibility", mock.Anything).Return(&sqs.ChangeMessageVisibilityOutput{}, nil)
+
+	client.ProcessMessage(message)
+
+	uts.mockSQSService.AssertNotCalled(uts.T(), "DeleteMessage", &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String("https://fake-queue-url"),
+		ReceiptHandle: aws.String("fake-receipt-handle"),
+	})
+	uts.mockSQSService.AssertCalled(uts.T(), "ChangeMessageVisibility", &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          aws.String("https://fake-queue-url"),
+		ReceiptHandle:     aws.String("fake-receipt-handle"),
+		VisibilityTimeout: aws.Int64(0),
+	})
+}
