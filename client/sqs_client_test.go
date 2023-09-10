@@ -45,7 +45,7 @@ func (ut *UnitTest) TestGetQueueUrl() {
 	})
 }
 
-func (ut *UnitTest) TestQueueUrlErrorCase() {
+func (ut *UnitTest) TestQueueUrl_Error() {
 	ut.mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{}, errors.New("erro"))
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
@@ -97,7 +97,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 	})
 }
 
-func (ut *UnitTest) TestReceiveMessageErrorCase() {
+func (ut *UnitTest) TestReceiveMessage_Error() {
 	ut.mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
