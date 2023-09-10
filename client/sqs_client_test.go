@@ -76,8 +76,8 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) (bool, error) {
-			return true, nil
+		Handle: func(message map[string]interface{}) bool {
+			return true
 		},
 	})
 
@@ -106,8 +106,8 @@ func (ut *UnitTest) TestReceiveMessageErrorCase() {
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) (bool, error) {
-			return true, nil
+		Handle: func(message map[string]interface{}) bool {
+			return true
 		},
 	})
 
@@ -123,8 +123,8 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) (bool, error) {
-			return true, nil
+		Handle: func(message map[string]interface{}) bool {
+			return true
 		},
 		PollingWaitTimeSeconds: 20,
 	})
@@ -151,8 +151,8 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) (bool, error) {
-			return false, errors.New("fake-error")
+		Handle: func(message map[string]interface{}) bool {
+			return false
 		},
 		PollingWaitTimeSeconds: 20,
 	})

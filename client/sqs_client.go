@@ -21,7 +21,7 @@ type SQSService interface {
 
 type SQSClientOptions struct {
 	QueueName              string
-	Handle                 func(message map[string]interface{}) (bool, error)
+	Handle                 func(message map[string]interface{}) bool
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
@@ -108,10 +108,10 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 
 	fmt.Printf("handling message: %s\n", *message.Body)
 
-	handled, err := s.clientOptions.Handle(messageBody)
+	handled := s.clientOptions.Handle(messageBody)
 
-	if err != nil {
-		fmt.Printf("failed to handle message: %s\n", err.Error())
+	if !handled {
+		fmt.Printf("failed to handle message: %s\n", *message.Body)
 
 		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          queueUrl,
@@ -122,14 +122,10 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		return
 	}
 
-	if handled {
-		s.client.DeleteMessage(&sqs.DeleteMessageInput{
-			QueueUrl:      queueUrl,
-			ReceiptHandle: message.ReceiptHandle,
-		})
-
-		return
-	}
+	s.client.DeleteMessage(&sqs.DeleteMessageInput{
+		QueueUrl:      queueUrl,
+		ReceiptHandle: message.ReceiptHandle,
+	})
 }
 
 // Poll calls ReceiveMessages based on the polling wait time
