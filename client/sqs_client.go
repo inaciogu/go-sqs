@@ -19,6 +19,13 @@ type SQSService interface {
 	DeleteMessage(input *sqs.DeleteMessageInput) (*sqs.DeleteMessageOutput, error)
 }
 
+type SQSClientInterface interface {
+	GetQueueUrl() *string
+	ReceiveMessages() error
+	ProcessMessage(message *sqs.Message)
+	Poll()
+}
+
 type SQSClientOptions struct {
 	QueueName              string
 	Handle                 func(message map[string]interface{}) bool
