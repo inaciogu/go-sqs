@@ -3,10 +3,10 @@ package handler
 import sqsclient "github.com/inaciogu/go-sqs-client/client"
 
 type SQSHandler struct {
-	Clients []*sqsclient.SQSClient
+	Clients []sqsclient.SQSClientInterface
 }
 
-func New(clients []*sqsclient.SQSClient) *SQSHandler {
+func New(clients []sqsclient.SQSClientInterface) *SQSHandler {
 	return &SQSHandler{
 		Clients: clients,
 	}
