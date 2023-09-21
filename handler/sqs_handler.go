@@ -1,6 +1,6 @@
 package handler
 
-import sqsclient "github.com/inaciogu/go-sqs-client/client"
+import sqsclient "github.com/inaciogu/go-sqs-consumer/client"
 
 type SQSHandler struct {
 	Clients []sqsclient.SQSClientInterface

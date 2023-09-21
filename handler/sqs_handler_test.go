@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	sqsclient "github.com/inaciogu/go-sqs-client/client"
-	"github.com/inaciogu/go-sqs-client/handler"
-	"github.com/inaciogu/go-sqs-client/mocks"
+	sqsclient "github.com/inaciogu/go-sqs-consumer/client"
+	"github.com/inaciogu/go-sqs-consumer/handler"
+	"github.com/inaciogu/go-sqs-consumer/mocks"
 	"github.com/stretchr/testify/suite"
 )
 

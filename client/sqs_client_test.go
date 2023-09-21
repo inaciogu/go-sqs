@@ -3,11 +3,12 @@ package client_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/inaciogu/go-sqs-client/client"
-	"github.com/inaciogu/go-sqs-client/mocks"
+	"github.com/inaciogu/go-sqs-consumer/client"
+	"github.com/inaciogu/go-sqs-consumer/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -87,10 +88,14 @@ func (ut *UnitTest) TestReceiveMessage() {
 	}
 
 	ut.mockSQSService.AssertCalled(ut.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
-		QueueUrl:          aws.String("https://fake-queue-url"),
-		VisibilityTimeout: aws.Int64(30),
-		WaitTimeSeconds:   aws.Int64(20),
+		QueueUrl:            aws.String("https://fake-queue-url"),
+		VisibilityTimeout:   aws.Int64(30),
+		MaxNumberOfMessages: aws.Int64(10),
+		WaitTimeSeconds:     aws.Int64(20),
 	})
+
+	time.Sleep(100 * time.Millisecond)
+
 	ut.mockSQSService.AssertCalled(ut.T(), "DeleteMessage", &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String("https://fake-queue-url"),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
@@ -127,6 +132,8 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
+		Region:                 "fake-region",
+		Endpoint:               "fake-endpoint",
 	})
 
 	message := &sqs.Message{

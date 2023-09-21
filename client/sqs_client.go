@@ -27,7 +27,7 @@ type SQSClientInterface interface {
 }
 
 type SQSClientOptions struct {
-	QueueName              string
+	QueueName              string // required
 	Handle                 func(message map[string]interface{}) bool
 	PollingWaitTimeSeconds int64
 	Region                 string
@@ -81,9 +81,10 @@ func (s *SQSClient) ReceiveMessages() error {
 	queueUrl := s.GetQueueUrl()
 
 	result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
-		QueueUrl:          queueUrl,
-		WaitTimeSeconds:   aws.Int64(20),
-		VisibilityTimeout: aws.Int64(30),
+		QueueUrl:            queueUrl,
+		MaxNumberOfMessages: aws.Int64(10),
+		WaitTimeSeconds:     aws.Int64(20),
+		VisibilityTimeout:   aws.Int64(30),
 	})
 
 	if err != nil {
@@ -91,7 +92,7 @@ func (s *SQSClient) ReceiveMessages() error {
 	}
 
 	for _, message := range result.Messages {
-		s.ProcessMessage(message)
+		go s.ProcessMessage(message)
 	}
 
 	return nil
@@ -113,8 +114,6 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		return
 	}
 
-	fmt.Printf("handling message: %s\n", *message.Body)
-
 	handled := s.clientOptions.Handle(messageBody)
 
 	if !handled {
@@ -133,6 +132,8 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		QueueUrl:      queueUrl,
 		ReceiptHandle: message.ReceiptHandle,
 	})
+
+	fmt.Printf("message handled: %s\n", *message.MessageId)
 }
 
 // Poll calls ReceiveMessages based on the polling wait time
