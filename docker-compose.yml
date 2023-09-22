@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  localstack:
+    image: localstack/localstack
+    ports:
+      - "4566:4566"
+  terraform:
+    image: hashicorp/terraform:light
+    volumes:
+      - ./iac/terraform:/terraform
+    working_dir: /terraform
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["terraform init && terraform apply -auto-approve"]
+    depends_on:
+      - localstack
