@@ -176,3 +176,32 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 		VisibilityTimeout: aws.Int64(0),
 	})
 }
+
+func (uts *UnitTest) TestPoll() {
+	uts.mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{
+		QueueUrl: aws.String("https://fake-queue-url"),
+	}, nil)
+
+	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+		Handle: func(message map[string]interface{}) bool {
+			return true
+		},
+		PollingWaitTimeSeconds: 1,
+	})
+
+	uts.mockSQSService.On("ReceiveMessage", mock.Anything).Return(&sqs.ReceiveMessageOutput{}, nil)
+
+	go client.Poll()
+
+	time.Sleep(2 * time.Second)
+
+	uts.mockSQSService.AssertCalled(uts.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String("https://fake-queue-url"),
+		MaxNumberOfMessages: aws.Int64(10),
+		VisibilityTimeout:   aws.Int64(30),
+		WaitTimeSeconds:     aws.Int64(20),
+	})
+
+	uts.mockSQSService.AssertNumberOfCalls(uts.T(), "ReceiveMessage", 1)
+}
