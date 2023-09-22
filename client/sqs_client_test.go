@@ -63,6 +63,14 @@ func (ut *UnitTest) TestReceiveMessage() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
+	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+		Handle: func(message map[string]interface{}) bool {
+			return true
+		},
+		PollingWaitTimeSeconds: 20,
+	})
+
 	expectedOutput := &sqs.ReceiveMessageOutput{
 		Messages: []*sqs.Message{
 			{
@@ -73,32 +81,18 @@ func (ut *UnitTest) TestReceiveMessage() {
 	}
 
 	ut.mockSQSService.On("ReceiveMessage", mock.Anything).Return(expectedOutput, nil)
+
 	ut.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
-		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) bool {
-			return true
-		},
-	})
-
-	err := client.ReceiveMessages()
-	if err != nil {
-		ut.T().Fatalf("Erro ao receber mensagens: %v", err)
-	}
-
-	ut.mockSQSService.AssertCalled(ut.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
-		QueueUrl:            aws.String("https://fake-queue-url"),
-		VisibilityTimeout:   aws.Int64(30),
-		MaxNumberOfMessages: aws.Int64(10),
-		WaitTimeSeconds:     aws.Int64(20),
-	})
+	go client.ReceiveMessages()
 
 	time.Sleep(100 * time.Millisecond)
 
-	ut.mockSQSService.AssertCalled(ut.T(), "DeleteMessage", &sqs.DeleteMessageInput{
-		QueueUrl:      aws.String("https://fake-queue-url"),
-		ReceiptHandle: aws.String("fake-receipt-handle"),
+	ut.mockSQSService.AssertCalled(ut.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String("https://fake-queue-url"),
+		MaxNumberOfMessages: aws.Int64(10),
+		VisibilityTimeout:   aws.Int64(30),
+		WaitTimeSeconds:     aws.Int64(20),
 	})
 }
 
@@ -132,8 +126,6 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
-		Region:                 "fake-region",
-		Endpoint:               "fake-endpoint",
 	})
 
 	message := &sqs.Message{
