@@ -132,8 +132,6 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		QueueUrl:      queueUrl,
 		ReceiptHandle: message.ReceiptHandle,
 	})
-
-	fmt.Printf("message handled: %s\n", *message.MessageId)
 }
 
 // Poll calls ReceiveMessages based on the polling wait time
