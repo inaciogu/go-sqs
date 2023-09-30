@@ -76,6 +76,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 			{
 				Body:          aws.String(`{"content": "fake-content"}`),
 				ReceiptHandle: aws.String("fake-receipt-handle"),
+				MessageId:     aws.String("fake-message-id"),
 			},
 		},
 	}
@@ -126,11 +127,13 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
+		From:                   client.OriginSQS,
 	})
 
 	message := &sqs.Message{
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
+		MessageId:     aws.String("fake-message-id"),
 	}
 
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
@@ -159,6 +162,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 	message := &sqs.Message{
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
+		MessageId:     aws.String("fake-message-id"),
 	}
 
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
