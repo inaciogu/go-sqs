@@ -2,6 +2,7 @@ package handler
 
 import sqsclient "github.com/inaciogu/go-sqs-consumer/client"
 
+// SQSHandler is responsible for running the SQS clients concurrently
 type SQSHandler struct {
 	Clients []sqsclient.SQSClientInterface
 }

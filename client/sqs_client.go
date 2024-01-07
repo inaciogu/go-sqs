@@ -26,16 +26,21 @@ type SQSClientInterface interface {
 	Poll()
 }
 
+// Indicates the origin of the message (SQS or SNS)
 type MessageOrigin string
 
 const (
+	// OriginSQS indicates that the message was sent directly to the SQS queue
 	OriginSQS MessageOrigin = "SQS"
+	// OriginSNS indicates that the message was sent to the SQS queue through SNS
 	OriginSNS MessageOrigin = "SNS"
 )
 
 type SQSClientOptions struct {
-	QueueName              string // required
-	Handle                 func(message map[string]interface{}) bool
+	QueueName string // required
+	// Handle is the function that will be called when a message is received.
+	// Return true if you want to delete the message from the queue, otherwise, return false
+	Handle                 func(message *MessageModel) bool
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
@@ -165,7 +170,6 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		var snsMessageBody map[string]interface{}
 
 		formattedSNSBody := strings.ReplaceAll(messageBody["Message"].(string), "'", "")
-		fmt.Printf("formattedSNSBody: %s\n", formattedSNSBody)
 
 		err := json.Unmarshal([]byte(formattedSNSBody), &snsMessageBody)
 
@@ -176,8 +180,6 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		}
 		messageAttributes = s.getMessageAttributes(messageBody)
 		messageBody = snsMessageBody
-
-		fmt.Printf("messageAttributes: %s\n", messageAttributes)
 	}
 
 	meta := MessageMetadata{
@@ -191,10 +193,10 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		Metadata: meta,
 	}
 
-	handled := s.clientOptions.Handle(messageBody)
+	handled := s.clientOptions.Handle(translatedMessage)
 
 	if !handled {
-		fmt.Printf("failed to handle message: %s\n", translatedMessage.Content)
+		fmt.Println("failed to handle message")
 
 		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          queueUrl,

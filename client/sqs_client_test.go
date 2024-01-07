@@ -65,7 +65,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) bool {
+		Handle: func(message *client.MessageModel) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
@@ -106,7 +106,7 @@ func (ut *UnitTest) TestReceiveMessage_Error() {
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) bool {
+		Handle: func(message *client.MessageModel) bool {
 			return true
 		},
 	})
@@ -123,7 +123,7 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) bool {
+		Handle: func(message *client.MessageModel) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
@@ -153,7 +153,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) bool {
+		Handle: func(message *client.MessageModel) bool {
 			return false
 		},
 		PollingWaitTimeSeconds: 20,
@@ -188,17 +188,17 @@ func (uts *UnitTest) TestPoll() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message map[string]interface{}) bool {
+		Handle: func(message *client.MessageModel) bool {
 			return true
 		},
-		PollingWaitTimeSeconds: 1,
+		PollingWaitTimeSeconds: 2,
 	})
 
 	uts.mockSQSService.On("ReceiveMessage", mock.Anything).Return(&sqs.ReceiveMessageOutput{}, nil)
 
 	go client.Poll()
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	uts.mockSQSService.AssertCalled(uts.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String("https://fake-queue-url"),
