@@ -90,6 +90,32 @@ func (_m *SQSService) GetQueueUrl(input *sqs.GetQueueUrlInput) (*sqs.GetQueueUrl
 	return r0, r1
 }
 
+// ListQueues provides a mock function with given fields: input
+func (_m *SQSService) ListQueues(input *sqs.ListQueuesInput) (*sqs.ListQueuesOutput, error) {
+	ret := _m.Called(input)
+
+	var r0 *sqs.ListQueuesOutput
+	var r1 error
+	if rf, ok := ret.Get(0).(func(*sqs.ListQueuesInput) (*sqs.ListQueuesOutput, error)); ok {
+		return rf(input)
+	}
+	if rf, ok := ret.Get(0).(func(*sqs.ListQueuesInput) *sqs.ListQueuesOutput); ok {
+		r0 = rf(input)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*sqs.ListQueuesOutput)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(*sqs.ListQueuesInput) error); ok {
+		r1 = rf(input)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // ReceiveMessage provides a mock function with given fields: input
 func (_m *SQSService) ReceiveMessage(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
 	ret := _m.Called(input)

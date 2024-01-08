@@ -85,7 +85,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	ut.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	go client.ReceiveMessages()
+	go client.ReceiveMessages("https://fake-queue-url")
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -112,7 +112,7 @@ func (ut *UnitTest) TestReceiveMessage_Error() {
 	})
 
 	assert.Panics(ut.T(), func() {
-		client.ReceiveMessages()
+		client.ReceiveMessages("https://fake-queue-url")
 	})
 }
 
@@ -208,4 +208,60 @@ func (uts *UnitTest) TestPoll() {
 	})
 
 	uts.mockSQSService.AssertNumberOfCalls(uts.T(), "ReceiveMessage", 1)
+}
+
+func (uts *UnitTest) TestGetQueues() {
+	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+		Handle: func(message *client.MessageModel) bool {
+			return true
+		},
+		PollingWaitTimeSeconds: 2,
+	})
+
+	uts.mockSQSService.On("ListQueues", mock.Anything).Return(&sqs.ListQueuesOutput{
+		QueueUrls: []*string{
+			aws.String("https://fake-queue-url"),
+			aws.String("https://fake-queue-url-2"),
+		},
+	}, nil)
+
+	queues := client.GetQueues("fake-queue-name")
+
+	assert.Equal(uts.T(), 2, len(queues))
+
+	uts.mockSQSService.AssertCalled(uts.T(), "ListQueues", &sqs.ListQueuesInput{
+		QueueNamePrefix: aws.String("fake-queue-name"),
+	})
+}
+
+func (uts *UnitTest) TestPollPrefixBased() {
+	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+		Handle: func(message *client.MessageModel) bool {
+			return true
+		},
+		PollingWaitTimeSeconds: 2,
+		PrefixBased:            true,
+	})
+
+	uts.mockSQSService.On("ListQueues", mock.Anything).Return(&sqs.ListQueuesOutput{
+		QueueUrls: []*string{
+			aws.String("https://fake-queue-url"),
+			aws.String("https://fake-queue-url-2"),
+		},
+	}, nil)
+
+	uts.mockSQSService.On("ReceiveMessage", mock.Anything).Return(&sqs.ReceiveMessageOutput{}, nil)
+
+	go client.Poll()
+
+	time.Sleep(3 * time.Second)
+
+	uts.mockSQSService.AssertCalled(uts.T(), "ListQueues", &sqs.ListQueuesInput{
+		QueueNamePrefix: aws.String("fake-queue-name"),
+	})
+
+	uts.mockSQSService.AssertNumberOfCalls(uts.T(), "ListQueues", 1)
+	uts.mockSQSService.AssertNumberOfCalls(uts.T(), "ReceiveMessage", 2)
 }

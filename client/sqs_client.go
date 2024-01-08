@@ -17,13 +17,15 @@ type SQSService interface {
 	ReceiveMessage(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error)
 	ChangeMessageVisibility(input *sqs.ChangeMessageVisibilityInput) (*sqs.ChangeMessageVisibilityOutput, error)
 	DeleteMessage(input *sqs.DeleteMessageInput) (*sqs.DeleteMessageOutput, error)
+	ListQueues(input *sqs.ListQueuesInput) (*sqs.ListQueuesOutput, error)
 }
 
 type SQSClientInterface interface {
 	GetQueueUrl() *string
-	ReceiveMessages() error
+	ReceiveMessages(queueUrl string) error
 	ProcessMessage(message *sqs.Message)
 	Poll()
+	GetQueues(prefix string) []*string
 }
 
 // Indicates the origin of the message (SQS or SNS)
@@ -45,6 +47,7 @@ type SQSClientOptions struct {
 	Region                 string
 	Endpoint               string
 	From                   MessageOrigin
+	PrefixBased            bool
 }
 
 type SQSClient struct {
@@ -101,14 +104,31 @@ func (s *SQSClient) GetQueueUrl() *string {
 	return aws.String(*urlResult.QueueUrl)
 }
 
-// ReceiveMessages polls messages from the queue
-func (s *SQSClient) ReceiveMessages() error {
-	fmt.Printf("polling messages from %s\n", s.clientOptions.QueueName)
+// GetQueues returns a list of queues based on the prefix
+func (s *SQSClient) GetQueues(prefix string) []*string {
+	input := &sqs.ListQueuesInput{
+		QueueNamePrefix: aws.String(prefix),
+	}
 
-	queueUrl := s.GetQueueUrl()
+	result, err := s.client.ListQueues(input)
+
+	if err != nil {
+		panic(err)
+	}
+
+	return result.QueueUrls
+}
+
+// ReceiveMessages polls messages from the queue
+func (s *SQSClient) ReceiveMessages(queueUrl string) error {
+	splittedUrl := strings.Split(queueUrl, "/")
+
+	queueName := splittedUrl[len(splittedUrl)-1]
+
+	fmt.Printf("polling messages from %s\n", queueName)
 
 	result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
-		QueueUrl:            queueUrl,
+		QueueUrl:            aws.String(queueUrl),
 		MaxNumberOfMessages: aws.Int64(10),
 		WaitTimeSeconds:     aws.Int64(20),
 		VisibilityTimeout:   aws.Int64(30),
@@ -223,6 +243,18 @@ func (s *SQSClient) Poll() {
 	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
 
 	for range time.C {
-		s.ReceiveMessages()
+		if s.clientOptions.PrefixBased {
+			queues := s.GetQueues(s.clientOptions.QueueName)
+
+			for _, queue := range queues {
+				go s.ReceiveMessages(*queue)
+			}
+
+			continue
+		}
+
+		queueUrl := s.GetQueueUrl()
+
+		s.ReceiveMessages(*queueUrl)
 	}
 }
