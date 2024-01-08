@@ -54,7 +54,7 @@ func main() {
 	})
 }
 ``````
-If you want to consume queues by a prefix, you can just set the `PrefixBased` option to `true` Then, the `QueueName` will be used as a prefix to find all queues that match with the prefix.
+If you want to consume queues by a prefix, you can just set the `PrefixBased` option to `true` Then, the `QueueName` will be used as a prefix to find all queues that match the prefix.
 
 ### Configuration
 To give the package access to your AWS account, you can use the following environment variables:
