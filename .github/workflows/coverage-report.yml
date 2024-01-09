@@ -22,4 +22,6 @@ jobs:
       - name: Report Coverage
         uses: paambaati/codeclimate-action@v3.2.0
         with:
-          coverageCommand: go test -coverprofile cover.out ./...
+          coverageCommand: go test -coverprofile=cover.out ./...
+          coverageLocations: |
+            ${{ github.workspace }}/cover.out:gocov
