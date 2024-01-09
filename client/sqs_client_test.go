@@ -27,6 +27,14 @@ func TestUnitSuites(t *testing.T) {
 	suite.Run(t, &UnitTest{})
 }
 
+func (ur *UnitTest) TestNewWithoutSQSService() {
+	client := client.New(nil, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+	})
+
+	assert.NotNil(ur.T(), client)
+}
+
 func (ut *UnitTest) TestGetQueueUrl() {
 	expectedOutput := &sqs.GetQueueUrlOutput{
 		QueueUrl: aws.String("https://fake-queue-url"),
@@ -208,6 +216,22 @@ func (uts *UnitTest) TestPoll() {
 	})
 
 	uts.mockSQSService.AssertNumberOfCalls(uts.T(), "ReceiveMessage", 1)
+}
+
+func (ut *UnitTest) TestGetQueues_Error() {
+	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+		Handle: func(message *client.MessageModel) bool {
+			return true
+		},
+		PollingWaitTimeSeconds: 2,
+	})
+
+	ut.mockSQSService.On("ListQueues", mock.Anything).Return(nil, errors.New("Error"))
+
+	assert.Panics(ut.T(), func() {
+		client.GetQueues("fake-queue-name")
+	})
 }
 
 func (uts *UnitTest) TestGetQueues() {
