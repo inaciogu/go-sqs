@@ -24,4 +24,5 @@ jobs:
         with:
           coverageCommand: go test -coverprofile=cover.out ./...
           coverageLocations: |
-            ${{ github.workspace }}/cover.out:gocov
+            ${{ github.workspace }}/cover.out:lcov
+          debug: true
