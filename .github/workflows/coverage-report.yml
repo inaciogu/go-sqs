@@ -23,6 +23,4 @@ jobs:
         uses: paambaati/codeclimate-action@v3.2.0
         with:
           coverageCommand: go test -coverprofile=cover.out ./...
-          coverageLocations: |
-            ./*.out:gcov
           debug: true
