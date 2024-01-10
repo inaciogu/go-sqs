@@ -1,9 +1,0 @@
-version: '2'
-plugins:
-  go:
-    enabled: true
-    channel: "14"
-  duplication:
-    enabled: true
-  code-climate-total-repos:
-    enabled: true
