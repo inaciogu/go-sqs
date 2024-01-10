@@ -145,11 +145,30 @@ func (s *SQSClient) ReceiveMessages(queueUrl string) error {
 	return nil
 }
 
-func (s *SQSClient) getMessageAttributes(messageBody map[string]interface{}) map[string]string {
+func (s *SQSClient) getMessageAttributes(message sqs.Message) map[string]string {
 	attributes := make(map[string]string)
 	snsMessageAttributes := make(MessageAttributes)
 
+	if s.clientOptions.From != OriginSNS {
+		for key, value := range message.MessageAttributes {
+			attributes[key] = *value.StringValue
+		}
+
+		return attributes
+	}
+
+	var messageBody map[string]interface{}
+
+	err := json.Unmarshal([]byte(*message.Body), &messageBody)
+
+	if err != nil {
+		fmt.Println(err.Error())
+
+		return attributes
+	}
+
 	messageAttributes, ok := messageBody["MessageAttributes"].(map[string]interface{})
+
 	if !ok {
 		return attributes
 	}
@@ -186,20 +205,18 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		return
 	}
 
+	messageAttributes = s.getMessageAttributes(*message)
 	if s.clientOptions.From == OriginSNS {
-		var snsMessageBody map[string]interface{}
+		var snsBody map[string]interface{}
 
-		formattedSNSBody := strings.ReplaceAll(messageBody["Message"].(string), "'", "")
-
-		err := json.Unmarshal([]byte(formattedSNSBody), &snsMessageBody)
+		err = json.Unmarshal([]byte(messageBody["Message"].(string)), &snsBody)
 
 		if err != nil {
 			fmt.Println(err.Error())
 
 			return
 		}
-		messageAttributes = s.getMessageAttributes(messageBody)
-		messageBody = snsMessageBody
+		messageBody = snsBody
 	}
 
 	meta := MessageMetadata{
@@ -216,7 +233,7 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 	handled := s.clientOptions.Handle(translatedMessage)
 
 	if !handled {
-		fmt.Println("failed to handle message")
+		fmt.Printf("failed to handle message with ID: %s\n", meta.MessageId)
 
 		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          queueUrl,
@@ -227,8 +244,7 @@ func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 		return
 	}
 
-	fmt.Printf("message handled: %s\n", translatedMessage.Content)
-	fmt.Printf("metadata: %s\n", messageAttributes)
+	fmt.Printf("message handled ID: %s\n", meta.MessageId)
 
 	s.client.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      queueUrl,
