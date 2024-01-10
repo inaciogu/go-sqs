@@ -135,11 +135,21 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
-		From:                   client.OriginSQS,
+		From:                   client.OriginSNS,
 	})
 
 	message := &sqs.Message{
-		Body:          aws.String(`{"content": "fake-content"}`),
+		Body: aws.String(`{
+			"Message": "{\n  \"asda\": \"asdas\"\n}",
+			"MessageId": "fake-message-id",
+			"ReceiptHandle": "fake-receipt-handle",
+			"MessageAttributes": {
+				"attribute1": {
+					"Type": "String",
+					"Value": "value1"
+				}
+			}
+		}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
 		MessageId:     aws.String("fake-message-id"),
 	}
