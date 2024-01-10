@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check files
+        run: ls -R
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
