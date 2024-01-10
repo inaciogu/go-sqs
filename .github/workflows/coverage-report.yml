@@ -8,33 +8,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
           go-version: 1.21.x
-
       - name: Install Dependencies
-        run: go mod download
-
-      - name: Run Tests and Generate Coverage
-        run: go test -coverprofile=c.out ./...
-
-      - name: Install cc-test-reporter
-        run: |
-          curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
-          chmod +x ./cc-test-reporter
-
-      - name: Upload Coverage to Code Climate
+        run: go get ./...
+      - name: Build
+        run: go build -v ./...
+      - name: Report Coverage
         uses: paambaati/codeclimate-action@v5.0.0
         env:
           CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}
         with:
-          coverageCommand: ./cc-test-reporter format-coverage -t gocov -o codeclimate.json c.out
-
-      - name: Upload to Code Climate
-        run: ./cc-test-reporter upload-coverage
+          coverageCommand: go test -coverprofile=c.out ./...
+          debug: true
