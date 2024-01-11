@@ -1,7 +1,6 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -128,101 +127,31 @@ func (s *SQSClient) ReceiveMessages(queueUrl string) error {
 	return nil
 }
 
-func (s *SQSClient) getMessageAttributes(message sqs.Message) map[string]string {
-	attributes := make(map[string]string)
-	snsMessageAttributes := make(messagemodel.MessageAttributes)
-
-	if s.clientOptions.From != OriginSNS {
-		for key, value := range message.MessageAttributes {
-			attributes[key] = *value.StringValue
-		}
-
-		return attributes
-	}
-
-	var messageBody map[string]interface{}
-
-	err := json.Unmarshal([]byte(*message.Body), &messageBody)
-
-	if err != nil {
-		fmt.Println(err.Error())
-
-		return attributes
-	}
-
-	messageAttributes, ok := messageBody["MessageAttributes"].(map[string]interface{})
-
-	if !ok {
-		return attributes
-	}
-
-	for key, value := range messageAttributes {
-		attribute := value.(map[string]interface{})
-		snsMessageAttributes[key] = messagemodel.Attribute{
-			Type:  attribute["Type"].(string),
-			Value: attribute["Value"].(string),
-		}
-	}
-
-	for key, value := range snsMessageAttributes {
-		attributes[key] = value.Value
-	}
-
-	return attributes
-}
-
-// ProcessMessage Transforms message body and delete it from the queue if it was handled successfully, otherwise, it changes the message visibility
-func (s *SQSClient) ProcessMessage(message *sqs.Message) {
+// ProcessMessage executes the Handle method and deletes the message from the queue if the Handle method returns true
+func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
 	queueUrl := s.GetQueueUrl()
 
-	var messageContent string
-	var messageAttributes map[string]string
+	message := messagemodel.New(sqsMessage)
 
-	messageContent = *message.Body
-
-	messageAttributes = s.getMessageAttributes(*message)
-	if s.clientOptions.From == OriginSNS {
-		messageBody := messagemodel.SNSMessageBody{}
-
-		err := json.Unmarshal([]byte(*message.Body), &messageBody)
-
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-
-		messageContent = messageBody.Message
-	}
-
-	meta := messagemodel.MessageMetadata{
-		MessageId:         *message.MessageId,
-		ReceiptHandle:     *message.ReceiptHandle,
-		MessageAttributes: messageAttributes,
-	}
-
-	translatedMessage := &messagemodel.Message{
-		Content:  messageContent,
-		Metadata: meta,
-	}
-
-	handled := s.clientOptions.Handle(translatedMessage)
+	handled := s.clientOptions.Handle(message)
 
 	if !handled {
-		fmt.Printf("failed to handle message with ID: %s\n", meta.MessageId)
+		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
 
 		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          queueUrl,
-			ReceiptHandle:     message.ReceiptHandle,
+			ReceiptHandle:     &message.Metadata.ReceiptHandle,
 			VisibilityTimeout: aws.Int64(0),
 		})
 
 		return
 	}
 
-	fmt.Printf("message handled ID: %s\n", meta.MessageId)
+	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
 
 	s.client.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      queueUrl,
-		ReceiptHandle: message.ReceiptHandle,
+		ReceiptHandle: &message.Metadata.ReceiptHandle,
 	})
 }
 
