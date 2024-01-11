@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/inaciogu/go-sqs-consumer/messagemodel"
 )
 
 type SQSService interface {
@@ -42,7 +43,7 @@ type SQSClientOptions struct {
 	QueueName string // required
 	// Handle is the function that will be called when a message is received.
 	// Return true if you want to delete the message from the queue, otherwise, return false
-	Handle                 func(message *MessageModel) bool
+	Handle                 func(message *messagemodel.Message) bool
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
@@ -53,24 +54,6 @@ type SQSClientOptions struct {
 type SQSClient struct {
 	client        SQSService
 	clientOptions *SQSClientOptions
-}
-
-type MessageAttributes map[string]Attribute
-
-type Attribute struct {
-	Type  string
-	Value string
-}
-
-type MessageMetadata struct {
-	MessageId         string
-	ReceiptHandle     string
-	MessageAttributes map[string]string
-}
-
-type MessageModel struct {
-	Content  map[string]interface{}
-	Metadata MessageMetadata
 }
 
 func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
@@ -147,7 +130,7 @@ func (s *SQSClient) ReceiveMessages(queueUrl string) error {
 
 func (s *SQSClient) getMessageAttributes(message sqs.Message) map[string]string {
 	attributes := make(map[string]string)
-	snsMessageAttributes := make(MessageAttributes)
+	snsMessageAttributes := make(messagemodel.MessageAttributes)
 
 	if s.clientOptions.From != OriginSNS {
 		for key, value := range message.MessageAttributes {
@@ -175,7 +158,7 @@ func (s *SQSClient) getMessageAttributes(message sqs.Message) map[string]string 
 
 	for key, value := range messageAttributes {
 		attribute := value.(map[string]interface{})
-		snsMessageAttributes[key] = Attribute{
+		snsMessageAttributes[key] = messagemodel.Attribute{
 			Type:  attribute["Type"].(string),
 			Value: attribute["Value"].(string),
 		}
@@ -192,41 +175,32 @@ func (s *SQSClient) getMessageAttributes(message sqs.Message) map[string]string 
 func (s *SQSClient) ProcessMessage(message *sqs.Message) {
 	queueUrl := s.GetQueueUrl()
 
-	var messageBody map[string]interface{}
+	var messageContent string
 	var messageAttributes map[string]string
 
-	formattedBody := strings.ReplaceAll(*message.Body, "'", "")
-
-	err := json.Unmarshal([]byte(formattedBody), &messageBody)
-
-	if err != nil {
-		fmt.Println(err.Error())
-
-		return
-	}
+	messageContent = *message.Body
 
 	messageAttributes = s.getMessageAttributes(*message)
 	if s.clientOptions.From == OriginSNS {
-		var snsBody map[string]interface{}
+		messageBody := messagemodel.SNSMessageBody{}
 
-		err = json.Unmarshal([]byte(messageBody["Message"].(string)), &snsBody)
+		err := json.Unmarshal([]byte(*message.Body), &messageBody)
 
 		if err != nil {
 			fmt.Println(err.Error())
-
-			return
 		}
-		messageBody = snsBody
+
+		messageContent = messageBody.Message
 	}
 
-	meta := MessageMetadata{
+	meta := messagemodel.MessageMetadata{
 		MessageId:         *message.MessageId,
 		ReceiptHandle:     *message.ReceiptHandle,
 		MessageAttributes: messageAttributes,
 	}
 
-	translatedMessage := &MessageModel{
-		Content:  messageBody,
+	translatedMessage := &messagemodel.Message{
+		Content:  messageContent,
 		Metadata: meta,
 	}
 
