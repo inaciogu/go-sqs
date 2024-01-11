@@ -26,9 +26,6 @@ type Message struct {
 	Content  string
 	Metadata MessageMetadata
 }
-type User struct {
-	Name string `json:"name"`
-}
 
 func New(content string, metadata MessageMetadata) *Message {
 	return &Message{
