@@ -1,7 +1,7 @@
 name: Update CodeClimate Coverage
 
 on:
-  pull_request:
+  push:
     branches:
       - main
 
