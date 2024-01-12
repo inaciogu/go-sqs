@@ -1,0 +1,29 @@
+name: Update CodeClimate Coverage
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v4
+      - name: Install dependencies
+        run: go get ./...
+      - name: Build
+        run: go build -v ./...
+      - name: Upload coverage to Code Climate
+        uses: paambaati/codeclimate-action@v5
+        with:
+          debug: true
+          coverageCommand: go test -coverprofile c.out ./...
+          prefix: github.com/inaciogu/go-sqs-consumer
+
+  
