@@ -46,7 +46,6 @@ type SQSClientOptions struct {
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
-	From                   MessageOrigin
 	PrefixBased            bool
 }
 

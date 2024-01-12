@@ -136,7 +136,6 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
-		From:                   client.OriginSNS,
 	})
 
 	message := &sqs.Message{
