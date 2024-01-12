@@ -21,39 +21,47 @@ import (
 	"fmt"
 
 	"github.com/inaciogu/go-sqs-consumer/client"
-	"github.com/inaciogu/go-sqs-consumer/handler"
+	"github.com/inaciogu/go-sqs-consumer/message"
 	"github.com/joho/godotenv"
 )
+
+type Message struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
 
 func main() {
 	godotenv.Load(".env")
 
 	consumer1 := client.New(nil, client.SQSClientOptions{
-		QueueName: "test-queue1",
-		Handle: func(message *client.MessageModel) bool {
-			fmt.Printf("Message received: %s\n", message.Content)
+		QueueName: "test_queue",
+		Handle: func(message *message.Message) bool {
+			myMessage := Message{}
+
+			// Unmarshal the message content
+			err := message.Unmarshal(&myMessage)
+
+			if err != nil {
+				fmt.Println(err)
+
+				// Do something if the message content cannot be unmarshalled
+				return false
+			}
+
+			fmt.Println(myMessage.Email)
+
+			// Do something with the message content
+
+			// Return true if the message was successfully processed
 			return true
 		},
-		PollingWaitTimeSeconds: 30,
+		PollingWaitTimeSeconds: 10,
 		Region:                 "us-east-1",
-		From:                   client.OriginSNS,
+		From:                   client.OriginSQS,
 	})
+	handler := handler.New([]client.SQSClientInterface{consumer1})
 
-	consumer2 := client.New(nil, client.SQSClientOptions{
-		QueueName: "test-queue2",
-		Handle: func(message *client.MessageModel) bool {
-			fmt.Printf("Message received: %s\n", message.Content)
-			return true
-		},
-		PollingWaitTimeSeconds: 30,
-		Region:                 "us-east-1",
-		From:                   client.OriginSNS,
-	})
-
-	handler.New([]client.SQSClientInterface{
-		consumer1,
-		consumer2,
-	})
+	handler.Run()
 }
 ``````
 If you want to consume queues by a prefix, you can just set the `PrefixBased` option to `true` Then, the `QueueName` will be used as a prefix to find all queues that match the prefix.
