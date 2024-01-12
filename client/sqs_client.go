@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/inaciogu/go-sqs-consumer/messagemodel"
+	"github.com/inaciogu/go-sqs-consumer/message"
 )
 
 type SQSService interface {
@@ -42,7 +42,7 @@ type SQSClientOptions struct {
 	QueueName string // required
 	// Handle is the function that will be called when a message is received.
 	// Return true if you want to delete the message from the queue, otherwise, return false
-	Handle                 func(message *messagemodel.Message) bool
+	Handle                 func(message *message.Message) bool
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
@@ -131,7 +131,7 @@ func (s *SQSClient) ReceiveMessages(queueUrl string) error {
 func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
 	queueUrl := s.GetQueueUrl()
 
-	message := messagemodel.New(sqsMessage)
+	message := message.New(sqsMessage)
 
 	handled := s.clientOptions.Handle(message)
 

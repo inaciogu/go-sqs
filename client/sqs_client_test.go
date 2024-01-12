@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/inaciogu/go-sqs-consumer/client"
-	"github.com/inaciogu/go-sqs-consumer/messagemodel"
+	"github.com/inaciogu/go-sqs-consumer/message"
 	"github.com/inaciogu/go-sqs-consumer/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -74,7 +74,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
@@ -115,7 +115,7 @@ func (ut *UnitTest) TestReceiveMessage_Error() {
 
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 	})
@@ -132,7 +132,7 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 20,
@@ -172,7 +172,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return false
 		},
 		PollingWaitTimeSeconds: 20,
@@ -207,7 +207,7 @@ func (uts *UnitTest) TestPoll() {
 
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 2,
@@ -232,7 +232,7 @@ func (uts *UnitTest) TestPoll() {
 func (ut *UnitTest) TestGetQueues_Error() {
 	client := client.New(ut.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 2,
@@ -248,7 +248,7 @@ func (ut *UnitTest) TestGetQueues_Error() {
 func (uts *UnitTest) TestGetQueues() {
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 2,
@@ -273,7 +273,7 @@ func (uts *UnitTest) TestGetQueues() {
 func (uts *UnitTest) TestPollPrefixBased() {
 	client := client.New(uts.mockSQSService, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
-		Handle: func(message *messagemodel.Message) bool {
+		Handle: func(message *message.Message) bool {
 			return true
 		},
 		PollingWaitTimeSeconds: 2,

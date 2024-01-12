@@ -1,4 +1,4 @@
-package messagemodel
+package message
 
 import (
 	"encoding/json"
