@@ -28,12 +28,26 @@ func TestUnitSuites(t *testing.T) {
 	suite.Run(t, &UnitTest{})
 }
 
-func (ur *UnitTest) TestNewWithoutSQSService() {
+func (ut *UnitTest) TestNewWithoutSQSService() {
 	client := client.New(nil, client.SQSClientOptions{
 		QueueName: "fake-queue-name",
 	})
 
-	assert.NotNil(ur.T(), client)
+	assert.NotNil(ut.T(), client)
+}
+
+func (ut *UnitTest) TestNewWithSQSService() {
+	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+	})
+
+	assert.NotNil(ut.T(), client)
+}
+
+func (ut *UnitTest) TestNewWithoutQueueName() {
+	assert.Panics(ut.T(), func() {
+		client.New(nil, client.SQSClientOptions{})
+	})
 }
 
 func (ut *UnitTest) TestGetQueueUrl() {
