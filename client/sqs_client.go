@@ -1,7 +1,6 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/inaciogu/go-sqs-consumer/message"
 )
 
 type SQSService interface {
@@ -42,7 +42,7 @@ type SQSClientOptions struct {
 	QueueName string // required
 	// Handle is the function that will be called when a message is received.
 	// Return true if you want to delete the message from the queue, otherwise, return false
-	Handle                 func(message *MessageModel) bool
+	Handle                 func(message *message.Message) bool
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
@@ -53,24 +53,6 @@ type SQSClientOptions struct {
 type SQSClient struct {
 	client        SQSService
 	clientOptions *SQSClientOptions
-}
-
-type MessageAttributes map[string]Attribute
-
-type Attribute struct {
-	Type  string
-	Value string
-}
-
-type MessageMetadata struct {
-	MessageId         string
-	ReceiptHandle     string
-	MessageAttributes map[string]string
-}
-
-type MessageModel struct {
-	Content  map[string]interface{}
-	Metadata MessageMetadata
 }
 
 func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
@@ -145,110 +127,31 @@ func (s *SQSClient) ReceiveMessages(queueUrl string) error {
 	return nil
 }
 
-func (s *SQSClient) getMessageAttributes(message sqs.Message) map[string]string {
-	attributes := make(map[string]string)
-	snsMessageAttributes := make(MessageAttributes)
-
-	if s.clientOptions.From != OriginSNS {
-		for key, value := range message.MessageAttributes {
-			attributes[key] = *value.StringValue
-		}
-
-		return attributes
-	}
-
-	var messageBody map[string]interface{}
-
-	err := json.Unmarshal([]byte(*message.Body), &messageBody)
-
-	if err != nil {
-		fmt.Println(err.Error())
-
-		return attributes
-	}
-
-	messageAttributes, ok := messageBody["MessageAttributes"].(map[string]interface{})
-
-	if !ok {
-		return attributes
-	}
-
-	for key, value := range messageAttributes {
-		attribute := value.(map[string]interface{})
-		snsMessageAttributes[key] = Attribute{
-			Type:  attribute["Type"].(string),
-			Value: attribute["Value"].(string),
-		}
-	}
-
-	for key, value := range snsMessageAttributes {
-		attributes[key] = value.Value
-	}
-
-	return attributes
-}
-
-// ProcessMessage Transforms message body and delete it from the queue if it was handled successfully, otherwise, it changes the message visibility
-func (s *SQSClient) ProcessMessage(message *sqs.Message) {
+// ProcessMessage executes the Handle method and deletes the message from the queue if the Handle method returns true
+func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
 	queueUrl := s.GetQueueUrl()
 
-	var messageBody map[string]interface{}
-	var messageAttributes map[string]string
+	message := message.New(sqsMessage)
 
-	formattedBody := strings.ReplaceAll(*message.Body, "'", "")
-
-	err := json.Unmarshal([]byte(formattedBody), &messageBody)
-
-	if err != nil {
-		fmt.Println(err.Error())
-
-		return
-	}
-
-	messageAttributes = s.getMessageAttributes(*message)
-	if s.clientOptions.From == OriginSNS {
-		var snsBody map[string]interface{}
-
-		err = json.Unmarshal([]byte(messageBody["Message"].(string)), &snsBody)
-
-		if err != nil {
-			fmt.Println(err.Error())
-
-			return
-		}
-		messageBody = snsBody
-	}
-
-	meta := MessageMetadata{
-		MessageId:         *message.MessageId,
-		ReceiptHandle:     *message.ReceiptHandle,
-		MessageAttributes: messageAttributes,
-	}
-
-	translatedMessage := &MessageModel{
-		Content:  messageBody,
-		Metadata: meta,
-	}
-
-	handled := s.clientOptions.Handle(translatedMessage)
+	handled := s.clientOptions.Handle(message)
 
 	if !handled {
-		fmt.Printf("failed to handle message with ID: %s\n", meta.MessageId)
+		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
 
 		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          queueUrl,
-			ReceiptHandle:     message.ReceiptHandle,
+			ReceiptHandle:     &message.Metadata.ReceiptHandle,
 			VisibilityTimeout: aws.Int64(0),
 		})
 
 		return
 	}
 
-	fmt.Printf("message handled ID: %s\n", meta.MessageId)
+	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
 
 	s.client.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      queueUrl,
-		ReceiptHandle: message.ReceiptHandle,
+		ReceiptHandle: &message.Metadata.ReceiptHandle,
 	})
 }
 
