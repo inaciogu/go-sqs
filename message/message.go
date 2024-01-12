@@ -68,6 +68,8 @@ func getMessageSource(sqsMessage *sqs.Message) string {
 func getContent(sqsMessage *sqs.Message) string {
 	messageSource := getMessageSource(sqsMessage)
 
+	fmt.Println(messageSource)
+
 	if messageSource == SNS {
 		snsBody := SNSMessageBody{}
 
@@ -91,22 +93,16 @@ func getMessageAttributes(message *sqs.Message) map[string]string {
 		return attributes
 	}
 
-	var messageBody map[string]interface{}
+	var messageBody SNSMessageBody
 
-	err := json.Unmarshal([]byte(*message.Body), &messageBody)
+	json.Unmarshal([]byte(*message.Body), &messageBody)
 
-	if err != nil {
-		fmt.Println(err.Error())
-
+	if messageBody.MessageAttributes == nil {
 		return attributes
 	}
 
-	messageAttributes := messageBody["MessageAttributes"].(map[string]interface{})
-
-	for key, value := range messageAttributes {
-		attribute := value.(map[string]interface{})
-
-		attributes[key] = attribute["Value"].(string)
+	for key, attribute := range messageBody.MessageAttributes {
+		attributes[key] = attribute.Value
 	}
 
 	return attributes
