@@ -38,7 +38,7 @@ func TestUnitSuites(t *testing.T) {
 
 func (ut *UnitTest) TestRun() {
 	for _, client := range ut.clients {
-		client.On("Poll").Return()
+		client.On("Start").Return()
 	}
 
 	go ut.handler.Run()
@@ -46,6 +46,6 @@ func (ut *UnitTest) TestRun() {
 	time.Sleep(100 * time.Millisecond)
 
 	for _, client := range ut.clients {
-		client.AssertCalled(ut.T(), "Poll")
+		client.AssertCalled(ut.T(), "Start")
 	}
 }
