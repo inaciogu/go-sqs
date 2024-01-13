@@ -26,6 +26,7 @@ type SQSClientInterface interface {
 	ProcessMessage(message *sqs.Message)
 	Poll()
 	GetQueues(prefix string) []*string
+	Start()
 }
 
 // Indicates the origin of the message (SQS or SNS)
@@ -195,23 +196,27 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
 
 // Poll calls ReceiveMessages based on the polling wait time
 func (s *SQSClient) Poll() {
-	fmt.Println("starting polling")
+	if s.clientOptions.PrefixBased {
+		queues := s.GetQueues(s.clientOptions.QueueName)
 
-	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
-
-	for range time.C {
-		if s.clientOptions.PrefixBased {
-			queues := s.GetQueues(s.clientOptions.QueueName)
-
-			for _, queue := range queues {
-				go s.ReceiveMessages(*queue)
-			}
-
-			continue
+		for _, queue := range queues {
+			go s.ReceiveMessages(*queue)
 		}
 
-		queueUrl := s.GetQueueUrl()
+		return
+	}
 
-		s.ReceiveMessages(*queueUrl)
+	queueUrl := s.GetQueueUrl()
+
+	s.ReceiveMessages(*queueUrl)
+}
+
+func (s *SQSClient) Start() {
+	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
+
+	s.Poll()
+
+	for range time.C {
+		s.Poll()
 	}
 }
