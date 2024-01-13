@@ -57,8 +57,7 @@ func main() {
 			return true
 		},
 		PollingWaitTimeSeconds: 10,
-		Region:                 "us-east-1",
-		From:                   client.OriginSQS,
+		Region:                 "us-east-1"
 	})
 	handler := handler.New([]client.SQSClientInterface{consumer1})
 
