@@ -21,7 +21,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/inaciogu/go-sqs/consumer/client"
+	sqsclient "github.com/inaciogu/go-sqs/consumer"
 	"github.com/inaciogu/go-sqs/consumer/handler"
 	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/joho/godotenv"
@@ -35,7 +35,7 @@ type Message struct {
 func main() {
 	godotenv.Load(".env")
 
-	consumer1 := client.New(nil, client.SQSClientOptions{
+	consumer1 := sqsclient.New(nil, sqsclient.SQSClientOptions{
 		QueueName: "test_queue",
 		Handle: func(message *message.Message) bool {
 			myMessage := Message{}
@@ -60,7 +60,7 @@ func main() {
 
 	consumer1.Start()
 	// Or
-	handler.New([]client.SQSClientInterface{
+	handler.New([]sqsclient.SQSClientInterface{
 		consumer1,
 	}).Run()
 }
