@@ -1,4 +1,4 @@
-package client_test
+package sqsclient_test
 
 import (
 	"errors"
