@@ -7,7 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/inaciogu/go-sqs/consumer/client"
+	client "github.com/inaciogu/go-sqs/consumer"
 	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/inaciogu/go-sqs/mocks"
 	"github.com/stretchr/testify/assert"
