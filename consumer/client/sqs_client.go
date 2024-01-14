@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/inaciogu/go-sqs-consumer/message"
+	"github.com/inaciogu/go-sqs/consumer/message"
 )
 
 type SQSService interface {
@@ -26,6 +26,7 @@ type SQSClientInterface interface {
 	ProcessMessage(message *sqs.Message)
 	Poll()
 	GetQueues(prefix string) []*string
+	Start()
 }
 
 // Indicates the origin of the message (SQS or SNS)
@@ -46,8 +47,10 @@ type SQSClientOptions struct {
 	PollingWaitTimeSeconds int64
 	Region                 string
 	Endpoint               string
-	From                   MessageOrigin
 	PrefixBased            bool
+	MaxNumberOfMessages    int64
+	VisibilityTimeout      int64
+	WaitTimeSeconds        int64
 }
 
 type SQSClient struct {
@@ -55,7 +58,19 @@ type SQSClient struct {
 	clientOptions *SQSClientOptions
 }
 
+const (
+	DefaultPollingWaitTimeSeconds = 20
+	DefaultMaxNumberOfMessages    = 10
+	DefaultVisibilityTimeout      = 30
+	DefaultWaitTimeSeconds        = 20
+	DefaultRegion                 = "us-east-1"
+)
+
 func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
+	if options.QueueName == "" {
+		panic("QueueName is required")
+	}
+
 	if sqsService == nil {
 		sess := session.Must(session.NewSessionWithOptions(session.Options{
 			Config: aws.Config{
@@ -67,9 +82,33 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 		sqsService = sqs.New(sess)
 	}
 
+	setDefaultOptions(&options)
+
 	return &SQSClient{
 		client:        sqsService,
 		clientOptions: &options,
+	}
+}
+
+func setDefaultOptions(options *SQSClientOptions) {
+	if options.PollingWaitTimeSeconds == 0 {
+		options.PollingWaitTimeSeconds = DefaultPollingWaitTimeSeconds
+	}
+
+	if options.MaxNumberOfMessages == 0 {
+		options.MaxNumberOfMessages = DefaultMaxNumberOfMessages
+	}
+
+	if options.VisibilityTimeout == 0 {
+		options.VisibilityTimeout = DefaultVisibilityTimeout
+	}
+
+	if options.WaitTimeSeconds == 0 {
+		options.WaitTimeSeconds = DefaultWaitTimeSeconds
+	}
+
+	if options.Region == "" {
+		options.Region = "us-east-1"
 	}
 }
 
@@ -111,9 +150,9 @@ func (s *SQSClient) ReceiveMessages(queueUrl string) error {
 
 	result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(queueUrl),
-		MaxNumberOfMessages: aws.Int64(10),
-		WaitTimeSeconds:     aws.Int64(20),
-		VisibilityTimeout:   aws.Int64(30),
+		MaxNumberOfMessages: aws.Int64(s.clientOptions.MaxNumberOfMessages),
+		WaitTimeSeconds:     aws.Int64(s.clientOptions.WaitTimeSeconds),
+		VisibilityTimeout:   aws.Int64(s.clientOptions.VisibilityTimeout),
 	})
 
 	if err != nil {
@@ -157,23 +196,27 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
 
 // Poll calls ReceiveMessages based on the polling wait time
 func (s *SQSClient) Poll() {
-	fmt.Println("starting polling")
+	if s.clientOptions.PrefixBased {
+		queues := s.GetQueues(s.clientOptions.QueueName)
 
-	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
-
-	for range time.C {
-		if s.clientOptions.PrefixBased {
-			queues := s.GetQueues(s.clientOptions.QueueName)
-
-			for _, queue := range queues {
-				go s.ReceiveMessages(*queue)
-			}
-
-			continue
+		for _, queue := range queues {
+			go s.ReceiveMessages(*queue)
 		}
 
-		queueUrl := s.GetQueueUrl()
+		return
+	}
 
-		s.ReceiveMessages(*queueUrl)
+	queueUrl := s.GetQueueUrl()
+
+	s.ReceiveMessages(*queueUrl)
+}
+
+func (s *SQSClient) Start() {
+	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
+
+	s.Poll()
+
+	for range time.C {
+		s.Poll()
 	}
 }

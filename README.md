@@ -1,4 +1,4 @@
-[![Maintainability](https://api.codeclimate.com/v1/badges/9693cf5c61dc08d04fd5/maintainability)](https://codeclimate.com/github/inaciogu/go-sqs-consumer/maintainability)
+[![Maintainability](https://api.codeclimate.com/v1/badges/9693cf5c61dc08d04fd5/maintainability)](https://codeclimate.com/github/inaciogu/go-sqs/maintainability)
 
 ## Go SQS Consumer
 
@@ -9,7 +9,7 @@ This is a simple package to help you consume messages from AWS SQS concurrently.
 To install the package, use the following command:
 
 ``````shell
-go get github.com/inaciogu/go-sqs-consumer
+go get github.com/inaciogu/go-sqs
 ``````
 
 ### Usage
@@ -20,8 +20,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/inaciogu/go-sqs-consumer/client"
-	"github.com/inaciogu/go-sqs-consumer/message"
+	"github.com/inaciogu/go-sqs/client"
+	"github.com/inaciogu/go-sqs/message"
 	"github.com/joho/godotenv"
 )
 
