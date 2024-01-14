@@ -68,6 +68,11 @@ func (_m *SQSClientInterface) ReceiveMessages(queueUrl string) error {
 	return r0
 }
 
+// Start provides a mock function with given fields:
+func (_m *SQSClientInterface) Start() {
+	_m.Called()
+}
+
 // NewSQSClientInterface creates a new instance of SQSClientInterface. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewSQSClientInterface(t interface {

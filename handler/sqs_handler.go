@@ -15,7 +15,7 @@ func New(clients []sqsclient.SQSClientInterface) *SQSHandler {
 
 func (h *SQSHandler) Run() {
 	for _, client := range h.Clients {
-		go client.Poll()
+		go client.Start()
 	}
 
 	select {}
