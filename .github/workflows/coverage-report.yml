@@ -24,6 +24,6 @@ jobs:
         with:
           debug: true
           coverageCommand: go test -coverprofile c.out ./...
-          prefix: github.com/inaciogu/go-sqs-consumer
+          prefix: github.com/inaciogu/go-sqs
 
   
