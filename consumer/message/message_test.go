@@ -5,7 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/inaciogu/go-sqs-consumer/message"
+	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/stretchr/testify/suite"
 )
 

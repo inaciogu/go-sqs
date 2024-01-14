@@ -1,4 +1,4 @@
-module github.com/inaciogu/go-sqs-consumer
+module github.com/inaciogu/go-sqs
 
 go 1.20
 

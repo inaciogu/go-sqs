@@ -10,7 +10,7 @@ This is a simple package to help you consume messages from AWS SQS concurrently.
 To install the package, use the following command:
 
 ``````shell
-go get github.com/inaciogu/go-sqs-consumer
+go get github.com/inaciogu/go-sqs/consumer
 ``````
 
 ### Usage
@@ -21,8 +21,9 @@ package main
 import (
 	"fmt"
 
-	"github.com/inaciogu/go-sqs-consumer/client"
-	"github.com/inaciogu/go-sqs-consumer/message"
+	"github.com/inaciogu/go-sqs/consumer/client"
+	"github.com/inaciogu/go-sqs/consumer/handler"
+	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/joho/godotenv"
 )
 
@@ -51,18 +52,19 @@ func main() {
 
 			fmt.Println(myMessage.Email)
 
-			// Do something with the message content
-
-			// Return true if the message was successfully processed
 			return true
 		},
-		PollingWaitTimeSeconds: 10,
-		Region:                 "us-east-1"
+		PollingWaitTimeSeconds: 30,
+		Region:                 "us-east-1",
 	})
-	handler := handler.New([]client.SQSClientInterface{consumer1})
 
-	handler.Run()
+	consumer1.Start()
+	// Or
+	handler.New([]client.SQSClientInterface{
+		consumer1,
+	}).Run()
 }
+
 ``````
 If you want to consume queues by a prefix, you can just set the `PrefixBased` option to `true` Then, the `QueueName` will be used as a prefix to find all queues that match the prefix.
 
