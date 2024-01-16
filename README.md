@@ -85,6 +85,9 @@ If you want to contribute to the development of this package, follow these steps
 - Push to the branch (git push origin feature/new-feature)
 - Open a Pull Request
 
+### Running locally
+To use this package locally (without using your own AWS account) you can execute the `docker compose up` command that will run the [localstack](https://www.localstack.cloud/) and execute terraform commands to deploy the infra configured in `/iac/terraform/main.tf` locally.
+
 ### License
 This package is distributed under the **MIT** license. See the LICENSE file for more information.
 
