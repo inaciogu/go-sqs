@@ -43,14 +43,13 @@ type SQSClientOptions struct {
 	QueueName string // required
 	// Handle is the function that will be called when a message is received.
 	// Return true if you want to delete the message from the queue, otherwise, return false
-	Handle                 func(message *message.Message) bool
-	PollingWaitTimeSeconds int64
-	Region                 string
-	Endpoint               string
-	PrefixBased            bool
-	MaxNumberOfMessages    int64
-	VisibilityTimeout      int64
-	WaitTimeSeconds        int64
+	Handle              func(message *message.Message) bool
+	Region              string
+	Endpoint            string
+	PrefixBased         bool
+	MaxNumberOfMessages int64
+	VisibilityTimeout   int64
+	WaitTimeSeconds     int64
 }
 
 type SQSClient struct {
@@ -59,11 +58,10 @@ type SQSClient struct {
 }
 
 const (
-	DefaultPollingWaitTimeSeconds = 20
-	DefaultMaxNumberOfMessages    = 10
-	DefaultVisibilityTimeout      = 30
-	DefaultWaitTimeSeconds        = 20
-	DefaultRegion                 = "us-east-1"
+	DefaultMaxNumberOfMessages = 10
+	DefaultVisibilityTimeout   = 30
+	DefaultWaitTimeSeconds     = 20
+	DefaultRegion              = "us-east-1"
 )
 
 func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
@@ -91,10 +89,6 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 }
 
 func setDefaultOptions(options *SQSClientOptions) {
-	if options.PollingWaitTimeSeconds == 0 {
-		options.PollingWaitTimeSeconds = DefaultPollingWaitTimeSeconds
-	}
-
 	if options.MaxNumberOfMessages == 0 {
 		options.MaxNumberOfMessages = DefaultMaxNumberOfMessages
 	}
@@ -141,33 +135,34 @@ func (s *SQSClient) GetQueues(prefix string) []*string {
 }
 
 // ReceiveMessages polls messages from the queue
-func (s *SQSClient) ReceiveMessages(queueUrl string) error {
+func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error {
 	splittedUrl := strings.Split(queueUrl, "/")
 
 	queueName := splittedUrl[len(splittedUrl)-1]
 
-	fmt.Printf("polling messages from %s\n", queueName)
+	for {
+		fmt.Printf("polling messages from queue %s\n", queueName)
 
-	result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
-		QueueUrl:            aws.String(queueUrl),
-		MaxNumberOfMessages: aws.Int64(s.clientOptions.MaxNumberOfMessages),
-		WaitTimeSeconds:     aws.Int64(s.clientOptions.WaitTimeSeconds),
-		VisibilityTimeout:   aws.Int64(s.clientOptions.VisibilityTimeout),
-	})
+		result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
+			QueueUrl:            aws.String(queueUrl),
+			MaxNumberOfMessages: aws.Int64(s.clientOptions.MaxNumberOfMessages),
+			WaitTimeSeconds:     aws.Int64(s.clientOptions.WaitTimeSeconds),
+			VisibilityTimeout:   aws.Int64(s.clientOptions.VisibilityTimeout),
+		})
 
-	if err != nil {
-		panic(err)
+		if err != nil {
+			panic(err)
+		}
+
+		for _, message := range result.Messages {
+			ch <- message
+		}
 	}
-
-	for _, message := range result.Messages {
-		go s.ProcessMessage(message)
-	}
-
-	return nil
 }
 
 // ProcessMessage executes the Handle method and deletes the message from the queue if the Handle method returns true
 func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
+	time.Sleep(time.Duration(1) * time.Second)
 	queueUrl := s.GetQueueUrl()
 
 	message := message.New(sqsMessage)
@@ -196,11 +191,17 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
 
 // Poll calls ReceiveMessages based on the polling wait time
 func (s *SQSClient) Poll() {
+	ch := make(chan *sqs.Message)
+
 	if s.clientOptions.PrefixBased {
 		queues := s.GetQueues(s.clientOptions.QueueName)
 
 		for _, queue := range queues {
-			go s.ReceiveMessages(*queue)
+			go s.ReceiveMessages(*queue, ch)
+		}
+
+		for message := range ch {
+			go s.ProcessMessage(message)
 		}
 
 		return
@@ -208,15 +209,13 @@ func (s *SQSClient) Poll() {
 
 	queueUrl := s.GetQueueUrl()
 
-	s.ReceiveMessages(*queueUrl)
+	go s.ReceiveMessages(*queueUrl, ch)
+
+	for message := range ch {
+		go s.ProcessMessage(message)
+	}
 }
 
 func (s *SQSClient) Start() {
-	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
-
 	s.Poll()
-
-	for range time.C {
-		s.Poll()
-	}
 }
