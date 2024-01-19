@@ -28,23 +28,14 @@ type SQSClientInterface interface {
 	Start()
 }
 
-// Indicates the origin of the message (SQS or SNS)
-type MessageOrigin string
-
-const (
-	// OriginSQS indicates that the message was sent directly to the SQS queue
-	OriginSQS MessageOrigin = "SQS"
-	// OriginSNS indicates that the message was sent to the SQS queue through SNS
-	OriginSNS MessageOrigin = "SNS"
-)
-
 type SQSClientOptions struct {
-	QueueName string // required
+	QueueName string
 	// Handle is the function that will be called when a message is received.
 	// Return true if you want to delete the message from the queue, otherwise, return false
-	Handle              func(message *message.Message) bool
-	Region              string
-	Endpoint            string
+	Handle   func(message *message.Message) bool
+	Region   string
+	Endpoint string
+	// PrefixBased is a flag that indicates if the queue name is a prefix
 	PrefixBased         bool
 	MaxNumberOfMessages int64
 	VisibilityTimeout   int64
@@ -159,7 +150,7 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 	}
 }
 
-// ProcessMessage executes the Handle method and deletes the message from the queue if the Handle method returns true
+// ProcessMessage deletes or changes the visibility of the message based on the Handle function return.
 func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 	message := message.New(sqsMessage)
 
@@ -193,7 +184,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
 }
 
-// Poll calls ReceiveMessages based on the polling wait time
+// Poll starts polling messages from the queue
 func (s *SQSClient) Poll() {
 	if s.clientOptions.PrefixBased {
 		queues := s.GetQueues(s.clientOptions.QueueName)

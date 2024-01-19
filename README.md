@@ -3,8 +3,15 @@
 
 ## Go SQS Consumer
 
-### Description
-This is a simple package to help you consume messages from AWS SQS concurrently.
+### 🌟Description
+This is a simple package to help you consume messages from AWS SQS.
+
+### 🚀Features
+- [x] Consume messages in parallel
+- [x] Consume messages from different defined queues
+- [x] Consume messages from different queues by a prefix
+- [x] Error handling
+
 
 ### Installation
 To install the package, use the following command:
@@ -54,7 +61,7 @@ func main() {
 
 			return true
 		},
-		PollingWaitTimeSeconds: 30,
+		WaitTimeSeconds: 30,
 		Region:                 "us-east-1",
 	})
 
