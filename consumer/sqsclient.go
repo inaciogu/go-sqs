@@ -3,7 +3,6 @@ package sqsclient
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -161,58 +160,69 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 }
 
 // ProcessMessage executes the Handle method and deletes the message from the queue if the Handle method returns true
-func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
-	time.Sleep(time.Duration(1) * time.Second)
-	queueUrl := s.GetQueueUrl()
-
+func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 	message := message.New(sqsMessage)
 
 	handled := s.clientOptions.Handle(message)
 
 	if !handled {
-		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
-
-		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
-			QueueUrl:          queueUrl,
+		_, err := s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
+			QueueUrl:          aws.String(queueUrl),
 			ReceiptHandle:     &message.Metadata.ReceiptHandle,
 			VisibilityTimeout: aws.Int64(0),
 		})
 
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
+
 		return
 	}
 
-	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
-
-	s.client.DeleteMessage(&sqs.DeleteMessageInput{
-		QueueUrl:      queueUrl,
+	_, err := s.client.DeleteMessage(&sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(queueUrl),
 		ReceiptHandle: &message.Metadata.ReceiptHandle,
 	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
 }
 
 // Poll calls ReceiveMessages based on the polling wait time
 func (s *SQSClient) Poll() {
-	ch := make(chan *sqs.Message)
-
 	if s.clientOptions.PrefixBased {
 		queues := s.GetQueues(s.clientOptions.QueueName)
+		fmt.Println(queues)
 
 		for _, queue := range queues {
+			ch := make(chan *sqs.Message)
+
+			fmt.Println(*queue)
 			go s.ReceiveMessages(*queue, ch)
+
+			go func(queueUrl string) {
+				for message := range ch {
+					go s.ProcessMessage(message, queueUrl)
+				}
+			}(*queue)
 		}
 
-		for message := range ch {
-			go s.ProcessMessage(message)
-		}
-
-		return
+		select {}
 	}
+
+	ch := make(chan *sqs.Message)
 
 	queueUrl := s.GetQueueUrl()
 
 	go s.ReceiveMessages(*queueUrl, ch)
 
 	for message := range ch {
-		go s.ProcessMessage(message)
+		go s.ProcessMessage(message, *queueUrl)
 	}
 }
 
