@@ -3,7 +3,6 @@ package sqsclient
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -29,28 +28,18 @@ type SQSClientInterface interface {
 	Start()
 }
 
-// Indicates the origin of the message (SQS or SNS)
-type MessageOrigin string
-
-const (
-	// OriginSQS indicates that the message was sent directly to the SQS queue
-	OriginSQS MessageOrigin = "SQS"
-	// OriginSNS indicates that the message was sent to the SQS queue through SNS
-	OriginSNS MessageOrigin = "SNS"
-)
-
 type SQSClientOptions struct {
-	QueueName string // required
+	QueueName string
 	// Handle is the function that will be called when a message is received.
 	// Return true if you want to delete the message from the queue, otherwise, return false
-	Handle                 func(message *message.Message) bool
-	PollingWaitTimeSeconds int64
-	Region                 string
-	Endpoint               string
-	PrefixBased            bool
-	MaxNumberOfMessages    int64
-	VisibilityTimeout      int64
-	WaitTimeSeconds        int64
+	Handle   func(message *message.Message) bool
+	Region   string
+	Endpoint string
+	// PrefixBased is a flag that indicates if the queue name is a prefix
+	PrefixBased         bool
+	MaxNumberOfMessages int64
+	VisibilityTimeout   int64
+	WaitTimeSeconds     int64
 }
 
 type SQSClient struct {
@@ -59,11 +48,10 @@ type SQSClient struct {
 }
 
 const (
-	DefaultPollingWaitTimeSeconds = 20
-	DefaultMaxNumberOfMessages    = 10
-	DefaultVisibilityTimeout      = 30
-	DefaultWaitTimeSeconds        = 20
-	DefaultRegion                 = "us-east-1"
+	DefaultMaxNumberOfMessages = 10
+	DefaultVisibilityTimeout   = 30
+	DefaultWaitTimeSeconds     = 20
+	DefaultRegion              = "us-east-1"
 )
 
 func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
@@ -91,10 +79,6 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 }
 
 func setDefaultOptions(options *SQSClientOptions) {
-	if options.PollingWaitTimeSeconds == 0 {
-		options.PollingWaitTimeSeconds = DefaultPollingWaitTimeSeconds
-	}
-
 	if options.MaxNumberOfMessages == 0 {
 		options.MaxNumberOfMessages = DefaultMaxNumberOfMessages
 	}
@@ -141,82 +125,98 @@ func (s *SQSClient) GetQueues(prefix string) []*string {
 }
 
 // ReceiveMessages polls messages from the queue
-func (s *SQSClient) ReceiveMessages(queueUrl string) error {
+func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error {
 	splittedUrl := strings.Split(queueUrl, "/")
 
 	queueName := splittedUrl[len(splittedUrl)-1]
 
-	fmt.Printf("polling messages from %s\n", queueName)
+	for {
+		fmt.Printf("polling messages from queue %s\n", queueName)
 
-	result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
-		QueueUrl:            aws.String(queueUrl),
-		MaxNumberOfMessages: aws.Int64(s.clientOptions.MaxNumberOfMessages),
-		WaitTimeSeconds:     aws.Int64(s.clientOptions.WaitTimeSeconds),
-		VisibilityTimeout:   aws.Int64(s.clientOptions.VisibilityTimeout),
+		result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
+			QueueUrl:            aws.String(queueUrl),
+			MaxNumberOfMessages: aws.Int64(s.clientOptions.MaxNumberOfMessages),
+			WaitTimeSeconds:     aws.Int64(s.clientOptions.WaitTimeSeconds),
+			VisibilityTimeout:   aws.Int64(s.clientOptions.VisibilityTimeout),
+		})
+
+		if err != nil {
+			panic(err)
+		}
+
+		for _, message := range result.Messages {
+			ch <- message
+		}
+	}
+}
+
+// ProcessMessage deletes or changes the visibility of the message based on the Handle function return.
+func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
+	message := message.New(sqsMessage)
+
+	handled := s.clientOptions.Handle(message)
+
+	if !handled {
+		_, err := s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
+			QueueUrl:          aws.String(queueUrl),
+			ReceiptHandle:     &message.Metadata.ReceiptHandle,
+			VisibilityTimeout: aws.Int64(0),
+		})
+
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
+
+		return
+	}
+
+	_, err := s.client.DeleteMessage(&sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(queueUrl),
+		ReceiptHandle: &message.Metadata.ReceiptHandle,
 	})
 
 	if err != nil {
 		panic(err)
 	}
 
-	for _, message := range result.Messages {
-		go s.ProcessMessage(message)
-	}
-
-	return nil
-}
-
-// ProcessMessage executes the Handle method and deletes the message from the queue if the Handle method returns true
-func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message) {
-	queueUrl := s.GetQueueUrl()
-
-	message := message.New(sqsMessage)
-
-	handled := s.clientOptions.Handle(message)
-
-	if !handled {
-		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
-
-		s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
-			QueueUrl:          queueUrl,
-			ReceiptHandle:     &message.Metadata.ReceiptHandle,
-			VisibilityTimeout: aws.Int64(0),
-		})
-
-		return
-	}
-
 	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
-
-	s.client.DeleteMessage(&sqs.DeleteMessageInput{
-		QueueUrl:      queueUrl,
-		ReceiptHandle: &message.Metadata.ReceiptHandle,
-	})
 }
 
-// Poll calls ReceiveMessages based on the polling wait time
+// Poll starts polling messages from the queue
 func (s *SQSClient) Poll() {
 	if s.clientOptions.PrefixBased {
 		queues := s.GetQueues(s.clientOptions.QueueName)
+		fmt.Println(queues)
 
 		for _, queue := range queues {
-			go s.ReceiveMessages(*queue)
+			ch := make(chan *sqs.Message)
+
+			fmt.Println(*queue)
+			go s.ReceiveMessages(*queue, ch)
+
+			go func(queueUrl string) {
+				for message := range ch {
+					go s.ProcessMessage(message, queueUrl)
+				}
+			}(*queue)
 		}
 
-		return
+		select {}
 	}
+
+	ch := make(chan *sqs.Message)
 
 	queueUrl := s.GetQueueUrl()
 
-	s.ReceiveMessages(*queueUrl)
+	go s.ReceiveMessages(*queueUrl, ch)
+
+	for message := range ch {
+		go s.ProcessMessage(message, *queueUrl)
+	}
 }
 
 func (s *SQSClient) Start() {
-	time := time.NewTicker(time.Duration(s.clientOptions.PollingWaitTimeSeconds) * time.Second)
-
 	s.Poll()
-
-	for range time.C {
-		s.Poll()
-	}
 }

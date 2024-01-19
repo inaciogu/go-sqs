@@ -2,7 +2,6 @@ package message
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
@@ -67,8 +66,6 @@ func getMessageSource(sqsMessage *sqs.Message) string {
 
 func getContent(sqsMessage *sqs.Message) string {
 	messageSource := getMessageSource(sqsMessage)
-
-	fmt.Println(messageSource)
 
 	if messageSource == SNS {
 		snsBody := SNSMessageBody{}

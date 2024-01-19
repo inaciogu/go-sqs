@@ -12,13 +12,31 @@ provider "aws" {
   }
 }
 
+locals {
+  queues = {
+    test = {
+      name = "test"
+    },
+    test2 = {
+      name = "test2"
+    },
+    test3 = {
+      name = "test3"
+    }
+  }
+}
+
 resource "aws_sqs_queue" "test" {
-  name = "test"
+  for_each = local.queues
+
+  name = each.value.name
 }
 
 resource "aws_sqs_queue_policy" "test" {
-  queue_url = aws_sqs_queue.test.id
-  policy = jsonencode({
+  for_each = local.queues
+
+  queue_url = aws_sqs_queue.test[each.key].id
+  policy =  jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
@@ -28,7 +46,7 @@ resource "aws_sqs_queue_policy" "test" {
           AWS = "*"
         }
         Action = "sqs:SendMessage"
-        Resource = aws_sqs_queue.test.arn
+        Resource = aws_sqs_queue.test[each.key].arn
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = aws_sns_topic.test.arn
@@ -44,7 +62,9 @@ resource "aws_sns_topic" "test" {
 }
 
 resource "aws_sns_topic_subscription" "test" {
+  for_each = local.queues
+
   topic_arn = aws_sns_topic.test.arn
   protocol = "sqs"
-  endpoint = aws_sqs_queue.test.arn
+  endpoint = aws_sqs_queue.test[each.key].arn
 }
