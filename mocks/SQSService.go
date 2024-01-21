@@ -120,9 +120,9 @@ func (_m *SQSService) ListQueues(input *sqs.ListQueuesInput) (*sqs.ListQueuesOut
 
 // ReceiveMessage provides a mock function with given fields: input
 func (_m *SQSService) ReceiveMessage(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
-	ret := _m.Called(input)
-
 	time.Sleep(500 * time.Millisecond)
+
+	ret := _m.Called(input)
 
 	var r0 *sqs.ReceiveMessageOutput
 	var r1 error
