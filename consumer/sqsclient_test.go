@@ -112,7 +112,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	go client.ReceiveMessages("https://fake-queue-url", ch)
 
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 
 	fmt.Println(len(ch))
 
@@ -293,7 +293,7 @@ func (uts *UnitTest) TestPoll() {
 
 	go client.Poll()
 
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 
 	uts.mockSQSService.AssertCalled(uts.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String("https://fake-queue-url"),
@@ -375,7 +375,7 @@ func (uts *UnitTest) TestPollPrefixBased() {
 
 	go client.Poll()
 
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 
 	uts.mockSQSService.AssertCalled(uts.T(), "ListQueues", &sqs.ListQueuesInput{
 		QueueNamePrefix: aws.String("fake-queue-name"),
@@ -401,7 +401,7 @@ func (uts *UnitTest) TestStart() {
 
 	go client.Start()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 
 	uts.mockSQSService.AssertCalled(uts.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String("https://fake-queue-url"),
