@@ -49,18 +49,18 @@ func (_m *SQSClientInterface) Poll() {
 	_m.Called()
 }
 
-// ProcessMessage provides a mock function with given fields: message
+// ProcessMessage provides a mock function with given fields: message, queueUrl
 func (_m *SQSClientInterface) ProcessMessage(message *sqs.Message, queueUrl string) {
 	_m.Called(message, queueUrl)
 }
 
-// ReceiveMessages provides a mock function with given fields: queueUrl
+// ReceiveMessages provides a mock function with given fields: queueUrl, ch
 func (_m *SQSClientInterface) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error {
 	ret := _m.Called(queueUrl, ch)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string) error); ok {
-		r0 = rf(queueUrl)
+	if rf, ok := ret.Get(0).(func(string, chan *sqs.Message) error); ok {
+		r0 = rf(queueUrl, ch)
 	} else {
 		r0 = ret.Error(0)
 	}
