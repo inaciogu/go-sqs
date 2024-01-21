@@ -21,8 +21,8 @@ type SQSService interface {
 
 type SQSClientInterface interface {
 	GetQueueUrl() *string
-	ReceiveMessages(queueUrl string) error
-	ProcessMessage(message *sqs.Message)
+	ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
+	ProcessMessage(message *sqs.Message, queueUrl string)
 	Poll()
 	GetQueues(prefix string) []*string
 	Start()
@@ -43,8 +43,8 @@ type SQSClientOptions struct {
 }
 
 type SQSClient struct {
-	client        SQSService
-	clientOptions *SQSClientOptions
+	Client        SQSService
+	ClientOptions *SQSClientOptions
 }
 
 const (
@@ -73,8 +73,8 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 	setDefaultOptions(&options)
 
 	return &SQSClient{
-		client:        sqsService,
-		clientOptions: &options,
+		Client:        sqsService,
+		ClientOptions: &options,
 	}
 }
 
@@ -98,8 +98,8 @@ func setDefaultOptions(options *SQSClientOptions) {
 
 // GetQueueUrl returns the URL of the queue based on the queue name
 func (s *SQSClient) GetQueueUrl() *string {
-	urlResult, err := s.client.GetQueueUrl(&sqs.GetQueueUrlInput{
-		QueueName: aws.String(s.clientOptions.QueueName),
+	urlResult, err := s.Client.GetQueueUrl(&sqs.GetQueueUrlInput{
+		QueueName: aws.String(s.ClientOptions.QueueName),
 	})
 
 	if err != nil {
@@ -115,7 +115,7 @@ func (s *SQSClient) GetQueues(prefix string) []*string {
 		QueueNamePrefix: aws.String(prefix),
 	}
 
-	result, err := s.client.ListQueues(input)
+	result, err := s.Client.ListQueues(input)
 
 	if err != nil {
 		panic(err)
@@ -133,11 +133,11 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 	for {
 		fmt.Printf("polling messages from queue %s\n", queueName)
 
-		result, err := s.client.ReceiveMessage(&sqs.ReceiveMessageInput{
+		result, err := s.Client.ReceiveMessage(&sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueUrl),
-			MaxNumberOfMessages: aws.Int64(s.clientOptions.MaxNumberOfMessages),
-			WaitTimeSeconds:     aws.Int64(s.clientOptions.WaitTimeSeconds),
-			VisibilityTimeout:   aws.Int64(s.clientOptions.VisibilityTimeout),
+			MaxNumberOfMessages: aws.Int64(s.ClientOptions.MaxNumberOfMessages),
+			WaitTimeSeconds:     aws.Int64(s.ClientOptions.WaitTimeSeconds),
+			VisibilityTimeout:   aws.Int64(s.ClientOptions.VisibilityTimeout),
 		})
 
 		if err != nil {
@@ -154,10 +154,10 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 	message := message.New(sqsMessage)
 
-	handled := s.clientOptions.Handle(message)
+	handled := s.ClientOptions.Handle(message)
 
 	if !handled {
-		_, err := s.client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
+		_, err := s.Client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          aws.String(queueUrl),
 			ReceiptHandle:     &message.Metadata.ReceiptHandle,
 			VisibilityTimeout: aws.Int64(0),
@@ -172,7 +172,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 		return
 	}
 
-	_, err := s.client.DeleteMessage(&sqs.DeleteMessageInput{
+	_, err := s.Client.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(queueUrl),
 		ReceiptHandle: &message.Metadata.ReceiptHandle,
 	})
@@ -186,14 +186,12 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 
 // Poll starts polling messages from the queue
 func (s *SQSClient) Poll() {
-	if s.clientOptions.PrefixBased {
-		queues := s.GetQueues(s.clientOptions.QueueName)
-		fmt.Println(queues)
+	if s.ClientOptions.PrefixBased {
+		queues := s.GetQueues(s.ClientOptions.QueueName)
 
 		for _, queue := range queues {
 			ch := make(chan *sqs.Message)
 
-			fmt.Println(*queue)
 			go s.ReceiveMessages(*queue, ch)
 
 			go func(queueUrl string) {
