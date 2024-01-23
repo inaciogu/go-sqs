@@ -2,21 +2,33 @@ package logger
 
 import (
 	"fmt"
-	"log/slog"
-	"os"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type DefaultLogger struct {
-	*slog.Logger
+	*zap.Logger
 }
 
 func New() *DefaultLogger {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := zap.Config{
+		Level:       zap.NewAtomicLevelAt(zapcore.InfoLevel),
+		OutputPaths: []string{"stdout"},
+		Encoding:    "json",
+		EncoderConfig: zapcore.EncoderConfig{
+			MessageKey:  "message",
+			TimeKey:     "time",
+			LevelKey:    "level",
+			EncodeTime:  zapcore.ISO8601TimeEncoder,
+			EncodeLevel: zapcore.LowercaseLevelEncoder,
+		},
+	}
 
-	slog.SetDefault(logger)
+	zapLogger, _ := logger.Build()
 
 	return &DefaultLogger{
-		Logger: logger,
+		Logger: zapLogger,
 	}
 }
 

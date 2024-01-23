@@ -137,10 +137,8 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 
 	queueName := splittedUrl[len(splittedUrl)-1]
 
-	s.Logger.Log("polling messages from queue %s", queueName)
-
 	for {
-		s.Logger.Log("polling messages from queue %s\n", queueName)
+		s.Logger.Log("polling messages from queue %s", queueName)
 
 		result, err := s.Client.ReceiveMessage(&sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueUrl),
