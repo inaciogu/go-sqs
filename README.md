@@ -11,6 +11,9 @@ This is a simple package to help you consume messages from AWS SQS.
 - [x] Consume messages from different defined queues
 - [x] Consume messages from different queues by a prefix
 - [x] Error handling
+- [x] Message unmarshalling
+- [x] Message deletion
+- [x] Logging
 
 
 ### Installation
