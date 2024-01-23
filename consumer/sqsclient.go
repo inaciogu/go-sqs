@@ -103,6 +103,10 @@ func setDefaultOptions(options *SQSClientOptions) {
 	}
 }
 
+func (s *SQSClient) SetLogger(logger Logger) {
+	s.Logger = logger
+}
+
 // GetQueueUrl returns the URL of the queue based on the queue name
 func (s *SQSClient) GetQueueUrl() *string {
 	urlResult, err := s.Client.GetQueueUrl(&sqs.GetQueueUrlInput{
