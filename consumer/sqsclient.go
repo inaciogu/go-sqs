@@ -178,7 +178,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 			panic(err)
 		}
 
-		s.Logger.Log("failed to handle message with ID: %s\n", message.Metadata.MessageId)
+		s.Logger.Log("failed to handle message with ID: %s", message.Metadata.MessageId)
 
 		return
 	}
@@ -192,7 +192,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 		panic(err)
 	}
 
-	s.Logger.Log("message handled ID: %s\n", message.Metadata.MessageId)
+	s.Logger.Log("message handled ID: %s", message.Metadata.MessageId)
 }
 
 // Poll starts polling messages from the queue
