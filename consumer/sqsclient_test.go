@@ -16,6 +16,14 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+type MockLogger struct {
+	mock.Mock
+}
+
+func (m *MockLogger) Log(message string, v ...interface{}) {
+	m.Called(message, v)
+}
+
 type UnitTest struct {
 	suite.Suite
 	mockSQSService *mocks.SQSService
@@ -49,6 +57,18 @@ func (ut *UnitTest) TestNewWithoutQueueName() {
 	assert.Panics(ut.T(), func() {
 		client.New(nil, client.SQSClientOptions{})
 	})
+}
+
+func (ut *UnitTest) TestSetLogger() {
+	logger := new(MockLogger)
+
+	client := client.New(nil, client.SQSClientOptions{
+		QueueName: "fake-queue-name",
+	})
+
+	client.SetLogger(logger)
+
+	assert.NotNil(ut.T(), client)
 }
 
 func (ut *UnitTest) TestGetQueueUrl() {
