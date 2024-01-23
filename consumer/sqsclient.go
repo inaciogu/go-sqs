@@ -1,13 +1,13 @@
 package sqsclient
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/inaciogu/go-sqs/consumer/logger"
 	"github.com/inaciogu/go-sqs/consumer/message"
 )
 
@@ -17,6 +17,10 @@ type SQSService interface {
 	ChangeMessageVisibility(input *sqs.ChangeMessageVisibilityInput) (*sqs.ChangeMessageVisibilityOutput, error)
 	DeleteMessage(input *sqs.DeleteMessageInput) (*sqs.DeleteMessageOutput, error)
 	ListQueues(input *sqs.ListQueuesInput) (*sqs.ListQueuesOutput, error)
+}
+
+type Logger interface {
+	Log(message string, v ...interface{})
 }
 
 type SQSClientInterface interface {
@@ -45,6 +49,7 @@ type SQSClientOptions struct {
 type SQSClient struct {
 	Client        SQSService
 	ClientOptions *SQSClientOptions
+	Logger        Logger
 }
 
 const (
@@ -72,9 +77,11 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 
 	setDefaultOptions(&options)
 
+	logger := logger.New()
 	return &SQSClient{
 		Client:        sqsService,
 		ClientOptions: &options,
+		Logger:        logger,
 	}
 }
 
@@ -130,8 +137,10 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 
 	queueName := splittedUrl[len(splittedUrl)-1]
 
+	s.Logger.Log("polling messages from queue %s", queueName)
+
 	for {
-		fmt.Printf("polling messages from queue %s\n", queueName)
+		s.Logger.Log("polling messages from queue %s\n", queueName)
 
 		result, err := s.Client.ReceiveMessage(&sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueUrl),
@@ -167,7 +176,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 			panic(err)
 		}
 
-		fmt.Printf("failed to handle message with ID: %s\n", message.Metadata.MessageId)
+		s.Logger.Log("failed to handle message with ID: %s\n", message.Metadata.MessageId)
 
 		return
 	}
@@ -181,7 +190,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 		panic(err)
 	}
 
-	fmt.Printf("message handled ID: %s\n", message.Metadata.MessageId)
+	s.Logger.Log("message handled ID: %s\n", message.Metadata.MessageId)
 }
 
 // Poll starts polling messages from the queue
