@@ -44,12 +44,15 @@ type SQSClientOptions struct {
 	MaxNumberOfMessages int64
 	VisibilityTimeout   int64
 	WaitTimeSeconds     int64
+	// Logger is the logger that will be used to log messages
+	Logger Logger
+	// LogLevel is the level of the logger (eg. info, warn, error, debug)
+	LogLevel string
 }
 
 type SQSClient struct {
 	Client        SQSService
 	ClientOptions *SQSClientOptions
-	Logger        Logger
 }
 
 const (
@@ -77,11 +80,9 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 
 	setDefaultOptions(&options)
 
-	logger := logger.New()
 	return &SQSClient{
 		Client:        sqsService,
 		ClientOptions: &options,
-		Logger:        logger,
 	}
 }
 
@@ -101,10 +102,16 @@ func setDefaultOptions(options *SQSClientOptions) {
 	if options.Region == "" {
 		options.Region = "us-east-1"
 	}
+
+	if options.Logger == nil {
+		options.Logger = logger.New(logger.DefaultLoggerOptions{
+			Level: options.LogLevel,
+		})
+	}
 }
 
 func (s *SQSClient) SetLogger(logger Logger) {
-	s.Logger = logger
+	s.ClientOptions.Logger = logger
 }
 
 // GetQueueUrl returns the URL of the queue based on the queue name
@@ -142,7 +149,7 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 	queueName := splittedUrl[len(splittedUrl)-1]
 
 	for {
-		s.Logger.Log("polling messages from queue %s", queueName)
+		s.ClientOptions.Logger.Log("polling messages from queue %s", queueName)
 
 		result, err := s.Client.ReceiveMessage(&sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueUrl),
@@ -178,7 +185,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 			panic(err)
 		}
 
-		s.Logger.Log("failed to handle message with ID: %s", message.Metadata.MessageId)
+		s.ClientOptions.Logger.Log("failed to handle message with ID: %s", message.Metadata.MessageId)
 
 		return
 	}
@@ -192,7 +199,7 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 		panic(err)
 	}
 
-	s.Logger.Log("message handled ID: %s", message.Metadata.MessageId)
+	s.ClientOptions.Logger.Log("message handled ID: %s", message.Metadata.MessageId)
 }
 
 // Poll starts polling messages from the queue
