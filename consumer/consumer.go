@@ -1,4 +1,4 @@
-package sqsclient
+package consumer
 
 import (
 	"strings"
@@ -44,6 +44,7 @@ type SQSClientOptions struct {
 	MaxNumberOfMessages int64
 	VisibilityTimeout   int64
 	WaitTimeSeconds     int64
+	LogLevel            string
 }
 
 type SQSClient struct {
@@ -77,7 +78,7 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 
 	setDefaultOptions(&options)
 
-	logger := logger.New()
+	logger := logger.New(logger.DefaultLoggerConfig{LogLevel: options.LogLevel})
 	return &SQSClient{
 		Client:        sqsService,
 		ClientOptions: &options,
@@ -99,7 +100,11 @@ func setDefaultOptions(options *SQSClientOptions) {
 	}
 
 	if options.Region == "" {
-		options.Region = "us-east-1"
+		options.Region = DefaultRegion
+	}
+
+	if options.LogLevel == "" {
+		options.LogLevel = "info"
 	}
 }
 
@@ -154,6 +159,8 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 		if err != nil {
 			panic(err)
 		}
+
+		s.Logger.Log("received %d messages from queue %s", len(result.Messages), queueName)
 
 		for _, message := range result.Messages {
 			ch <- message

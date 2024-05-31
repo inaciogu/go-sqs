@@ -9,11 +9,30 @@ import (
 
 type DefaultLogger struct {
 	*zap.Logger
+	LogLevel string
 }
 
-func New() *DefaultLogger {
+type DefaultLoggerConfig struct {
+	LogLevel string
+}
+
+func New(config DefaultLoggerConfig) *DefaultLogger {
+	logLevelMap := map[string]zapcore.Level{
+		"debug":  zapcore.DebugLevel,
+		"info":   zapcore.InfoLevel,
+		"warn":   zapcore.WarnLevel,
+		"error":  zapcore.ErrorLevel,
+		"dpanic": zapcore.DPanicLevel,
+		"panic":  zapcore.PanicLevel,
+		"fatal":  zapcore.FatalLevel,
+	}
+
+	if _, ok := logLevelMap[config.LogLevel]; !ok {
+		config.LogLevel = "info"
+	}
+
 	logger := zap.Config{
-		Level:       zap.NewAtomicLevelAt(zapcore.InfoLevel),
+		Level:       zap.NewAtomicLevelAt(logLevelMap[config.LogLevel]),
 		OutputPaths: []string{"stdout"},
 		Encoding:    "json",
 		EncoderConfig: zapcore.EncoderConfig{
@@ -28,10 +47,21 @@ func New() *DefaultLogger {
 	zapLogger, _ := logger.Build()
 
 	return &DefaultLogger{
-		Logger: zapLogger,
+		Logger:   zapLogger,
+		LogLevel: config.LogLevel,
 	}
 }
 
 func (l *DefaultLogger) Log(message string, v ...interface{}) {
-	l.Info(fmt.Sprintf(message, v...))
+	logFunctionMap := map[string]func(string, ...zapcore.Field){
+		"debug":  l.Debug,
+		"info":   l.Info,
+		"warn":   l.Warn,
+		"error":  l.Error,
+		"dpanic": l.DPanic,
+		"panic":  l.Panic,
+		"fatal":  l.Fatal,
+	}
+
+	logFunctionMap[l.LogLevel](fmt.Sprintf(message, v...))
 }
