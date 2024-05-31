@@ -1,14 +1,14 @@
-package sqsclient_test
+package consumer_test
 
 import (
 	"errors"
 	"fmt"
+	"github.com/inaciogu/go-sqs/consumer"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	client "github.com/inaciogu/go-sqs/consumer"
 	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/inaciogu/go-sqs/mocks"
 	"github.com/stretchr/testify/assert"
@@ -38,7 +38,7 @@ func TestUnitSuites(t *testing.T) {
 }
 
 func (ut *UnitTest) TestNewWithoutSQSService() {
-	client := client.New(nil, client.SQSClientOptions{
+	client := consumer.New(nil, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 	})
 
@@ -46,7 +46,7 @@ func (ut *UnitTest) TestNewWithoutSQSService() {
 }
 
 func (ut *UnitTest) TestNewWithSQSService() {
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(ut.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 	})
 
@@ -55,14 +55,14 @@ func (ut *UnitTest) TestNewWithSQSService() {
 
 func (ut *UnitTest) TestNewWithoutQueueName() {
 	assert.Panics(ut.T(), func() {
-		client.New(nil, client.SQSClientOptions{})
+		consumer.New(nil, consumer.SQSClientOptions{})
 	})
 }
 
 func (ut *UnitTest) TestSetLogger() {
 	logger := new(MockLogger)
 
-	client := client.New(nil, client.SQSClientOptions{
+	client := consumer.New(nil, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 	})
 
@@ -77,7 +77,7 @@ func (ut *UnitTest) TestGetQueueUrl() {
 	}
 	ut.mockSQSService.On("GetQueueUrl", mock.Anything).Return(expectedOutput, nil)
 
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(ut.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 	})
 
@@ -93,7 +93,7 @@ func (ut *UnitTest) TestGetQueueUrl() {
 func (ut *UnitTest) TestQueueUrl_Error() {
 	ut.mockSQSService.On("GetQueueUrl", mock.Anything).Return(&sqs.GetQueueUrlOutput{}, errors.New("erro"))
 
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(ut.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 	})
 
@@ -107,7 +107,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(ut.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -152,7 +152,7 @@ func (ut *UnitTest) TestReceiveMessage_Error() {
 
 	ut.mockSQSService.On("ReceiveMessage", mock.Anything).Return(&sqs.ReceiveMessageOutput{}, errors.New("erro"))
 
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(ut.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -171,7 +171,7 @@ func (uts *UnitTest) TestProcessMessage_Handled_Error() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -196,7 +196,7 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -234,7 +234,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled_Error() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return false
@@ -259,7 +259,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return false
@@ -292,7 +292,7 @@ func (uts *UnitTest) TestPoll() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -327,7 +327,7 @@ func (uts *UnitTest) TestPoll() {
 }
 
 func (ut *UnitTest) TestGetQueues_Error() {
-	client := client.New(ut.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(ut.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -342,7 +342,7 @@ func (ut *UnitTest) TestGetQueues_Error() {
 }
 
 func (uts *UnitTest) TestGetQueues() {
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -366,7 +366,7 @@ func (uts *UnitTest) TestGetQueues() {
 }
 
 func (uts *UnitTest) TestPollPrefixBased() {
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true
@@ -408,7 +408,7 @@ func (uts *UnitTest) TestStart() {
 		QueueUrl: aws.String("https://fake-queue-url"),
 	}, nil)
 
-	client := client.New(uts.mockSQSService, client.SQSClientOptions{
+	client := consumer.New(uts.mockSQSService, consumer.SQSClientOptions{
 		QueueName: "fake-queue-name",
 		Handle: func(message *message.Message) bool {
 			return true

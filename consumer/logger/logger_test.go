@@ -16,15 +16,22 @@ func TestUnitSuites(t *testing.T) {
 }
 
 func (ut *UnitTestSuite) TestNew() {
-	logger := logger.New()
+	logger := logger.New(logger.DefaultLoggerConfig{LogLevel: "info"})
 
 	ut.NotNil(logger)
 }
 
 func (ut *UnitTestSuite) TestLog() {
-	logger := logger.New()
+	logger := logger.New(logger.DefaultLoggerConfig{LogLevel: "info"})
 
 	logger.Log("test")
 
 	ut.NotNil(logger)
+}
+
+func (ut *UnitTestSuite) TestFallbackLogLevel() {
+	logger := logger.New(logger.DefaultLoggerConfig{LogLevel: "invalid"})
+
+	ut.NotNil(logger)
+	ut.Equal("info", logger.LogLevel)
 }
