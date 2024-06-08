@@ -2,7 +2,6 @@ package message
 
 import (
 	"encoding/json"
-
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
@@ -82,6 +81,10 @@ func getMessageAttributes(message *sqs.Message) map[string]string {
 	attributes := make(map[string]string)
 	messageSource := getMessageSource(message)
 
+	for key, value := range message.Attributes {
+		attributes[key] = *value
+	}
+
 	if messageSource == SQS {
 		for key, value := range message.MessageAttributes {
 			attributes[key] = *value.StringValue
@@ -93,10 +96,6 @@ func getMessageAttributes(message *sqs.Message) map[string]string {
 	var messageBody SNSMessageBody
 
 	json.Unmarshal([]byte(*message.Body), &messageBody)
-
-	if messageBody.MessageAttributes == nil {
-		return attributes
-	}
 
 	for key, attribute := range messageBody.MessageAttributes {
 		attributes[key] = attribute.Value
