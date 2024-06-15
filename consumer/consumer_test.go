@@ -141,6 +141,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 		MaxNumberOfMessages: aws.Int64(10),
 		VisibilityTimeout:   aws.Int64(30),
 		WaitTimeSeconds:     aws.Int64(20),
+		AttributeNames:      []*string{aws.String("All")},
 	})
 	ut.Assert().Equal(1, len(ch))
 }
@@ -245,6 +246,12 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled_Error() {
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
 		MessageId:     aws.String("fake-message-id"),
+		MessageAttributes: map[string]*sqs.MessageAttributeValue{
+			"AproximateReceiveCount": {
+				DataType:    aws.String("Number"),
+				StringValue: aws.String("1"),
+			},
+		},
 	}
 
 	uts.mockSQSService.On("ChangeMessageVisibility", mock.Anything).Return(&sqs.ChangeMessageVisibilityOutput{}, errors.New("Error"))
@@ -270,6 +277,12 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
 		MessageId:     aws.String("fake-message-id"),
+		MessageAttributes: map[string]*sqs.MessageAttributeValue{
+			"ApproximateReceiveCount": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String("2"),
+			},
+		},
 	}
 
 	uts.mockSQSService.On("ChangeMessageVisibility", mock.Anything).Return(&sqs.ChangeMessageVisibilityOutput{}, nil)
@@ -283,7 +296,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 	uts.mockSQSService.AssertCalled(uts.T(), "ChangeMessageVisibility", &sqs.ChangeMessageVisibilityInput{
 		QueueUrl:          aws.String("https://fake-queue-url"),
 		ReceiptHandle:     aws.String("fake-receipt-handle"),
-		VisibilityTimeout: aws.Int64(0),
+		VisibilityTimeout: aws.Int64(4),
 	})
 }
 
@@ -320,6 +333,7 @@ func (uts *UnitTest) TestPoll() {
 		MaxNumberOfMessages: aws.Int64(10),
 		VisibilityTimeout:   aws.Int64(30),
 		WaitTimeSeconds:     aws.Int64(20),
+		AttributeNames:      []*string{aws.String("All")},
 	})
 	uts.mockSQSService.AssertCalled(uts.T(), "GetQueueUrl", &sqs.GetQueueUrlInput{
 		QueueName: aws.String("fake-queue-name"),
@@ -428,5 +442,6 @@ func (uts *UnitTest) TestStart() {
 		MaxNumberOfMessages: aws.Int64(10),
 		VisibilityTimeout:   aws.Int64(30),
 		WaitTimeSeconds:     aws.Int64(20),
+		AttributeNames:      []*string{aws.String("All")},
 	})
 }

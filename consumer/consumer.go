@@ -1,6 +1,8 @@
 package consumer
 
 import (
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -45,6 +47,8 @@ type SQSClientOptions struct {
 	VisibilityTimeout   int64
 	WaitTimeSeconds     int64
 	LogLevel            string
+	// BackoffMultiplier is the multiplier used to calculate the backoff time (visibility timeout)
+	BackoffMultiplier float64
 }
 
 type SQSClient struct {
@@ -106,6 +110,10 @@ func setDefaultOptions(options *SQSClientOptions) {
 	if options.LogLevel == "" {
 		options.LogLevel = "info"
 	}
+
+	if options.BackoffMultiplier == 0 {
+		options.BackoffMultiplier = 2
+	}
 }
 
 func (s *SQSClient) SetLogger(logger Logger) {
@@ -154,6 +162,7 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 			MaxNumberOfMessages: aws.Int64(s.ClientOptions.MaxNumberOfMessages),
 			WaitTimeSeconds:     aws.Int64(s.ClientOptions.WaitTimeSeconds),
 			VisibilityTimeout:   aws.Int64(s.ClientOptions.VisibilityTimeout),
+			AttributeNames:      []*string{aws.String("All")},
 		})
 
 		if err != nil {
@@ -168,6 +177,11 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 	}
 }
 
+// calculateBackoff calculates the backoff (visibility timeout) time based on the number of attempts to process the message
+func (s *SQSClient) calculateBackoff(attempts int) float64 {
+	return math.Pow(s.ClientOptions.BackoffMultiplier, float64(attempts))
+}
+
 // ProcessMessage deletes or changes the visibility of the message based on the Handle function return.
 func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 	message := message.New(sqsMessage)
@@ -175,10 +189,14 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 	handled := s.ClientOptions.Handle(message)
 
 	if !handled {
+		attempts, _ := strconv.Atoi(message.Metadata.MessageAttributes["ApproximateReceiveCount"])
+
+		backoff := s.calculateBackoff(attempts)
+
 		_, err := s.Client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          aws.String(queueUrl),
 			ReceiptHandle:     &message.Metadata.ReceiptHandle,
-			VisibilityTimeout: aws.Int64(0),
+			VisibilityTimeout: aws.Int64(int64(backoff)),
 		})
 
 		if err != nil {

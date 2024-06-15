@@ -41,6 +41,9 @@ func (u *UnitTest) TestSNSMessage() {
 	snsMessage := sqs.Message{
 		MessageId:     aws.String("message-id"),
 		ReceiptHandle: aws.String("receipt-handle"),
+		Attributes: map[string]*string{
+			"ApproximateReceiveCount": aws.String("1"),
+		},
 		Body: aws.String(`
 			{
 				"Message": "{\n  \"asda\": \"asdas\"\n}",
@@ -59,8 +62,9 @@ func (u *UnitTest) TestSNSMessage() {
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
 	u.Equal("{\n  \"asda\": \"asdas\"\n}", message.Content)
-	u.Equal(1, len(message.Metadata.MessageAttributes))
+	u.Equal(2, len(message.Metadata.MessageAttributes))
 	u.Equal("value1", message.Metadata.MessageAttributes["attribute1"])
+	u.Equal("1", message.Metadata.MessageAttributes["ApproximateReceiveCount"])
 }
 
 func (u *UnitTest) TestSNSWithoutMessageAttributes() {
