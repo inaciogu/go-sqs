@@ -1,7 +1,7 @@
 [![Maintainability](https://api.codeclimate.com/v1/badges/9693cf5c61dc08d04fd5/maintainability)](https://codeclimate.com/github/inaciogu/go-sqs-consumer/maintainability)
 [![Test Coverage](https://api.codeclimate.com/v1/badges/9693cf5c61dc08d04fd5/test_coverage)](https://codeclimate.com/github/inaciogu/go-sqs-consumer/test_coverage)
 
-## Go SQS Consumer
+## gosqs
 
 ### 🌟Description
 This is a simple package to help you consume messages from AWS SQS.
@@ -17,10 +17,11 @@ This is a simple package to help you consume messages from AWS SQS.
 
 
 ### Installation
+This library requires Go 1.25 or newer.
 To install the package, use the following command:
 
 ``````shell
-go get github.com/inaciogu/go-sqs/consumer
+go get github.com/inaciogu/go-sqs
 ``````
 
 ### Usage
@@ -29,54 +30,101 @@ go get github.com/inaciogu/go-sqs/consumer
 package main
 
 import (
-	"fmt"
+	"context"
+	"log"
 
-	"github.com/inaciogu/go-sqs/consumer"
-	"github.com/inaciogu/go-sqs/consumer/handler"
-	"github.com/inaciogu/go-sqs/consumer/message"
-	"github.com/joho/godotenv"
+	gosqs "github.com/inaciogu/go-sqs"
 )
 
-type Message struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-}
-
 func main() {
-	godotenv.Load(".env")
-
-	consumer1 := consumer.New(nil, consumer.SQSClientOptions{
+	client, err := gosqs.NewConsumer(func(ctx context.Context, msg *gosqs.Message) error {
+		return nil
+	}, gosqs.ConsumerOptions{
 		QueueName: "test_queue",
-		Handle: func(message *message.Message) bool {
-			myMessage := Message{}
-
-			// Unmarshal the message content
-			err := message.Unmarshal(&myMessage)
-
-			if err != nil {
-				fmt.Println(err)
-
-				// Do something if the message content cannot be unmarshalled
-				return false
-			}
-
-			fmt.Println(myMessage.Email)
-
-			return true
-		},
-		WaitTimeSeconds: 30,
-		Region:                 "us-east-1",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	consumer1.Start()
-	// Or
-	handler.New([]consumer.SQSClientInterface{
-		consumer1,
-		// consumer 2, consumer 3, ...
-	}).Run()
+	if err := client.Run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
 }
 
 ``````
+### New API
+If you want a more idiomatic, context-first interface, you can use `gosqs.NewConsumer`.
+Return `nil` from the handler to delete the message, or return `gosqs.ErrDrop` to delete it without retrying. Any other error will trigger the retry/backoff path.
+
+``````go
+package main
+
+import (
+	"context"
+	"log"
+
+	gosqs "github.com/inaciogu/go-sqs"
+)
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := gosqs.NewConsumer(func(ctx context.Context, message *gosqs.Message) error {
+		return nil
+	}, gosqs.ConsumerOptions{
+		QueueName: "test_queue",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := client.Run(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+``````
+
+If you want to run multiple consumers in parallel, use `gosqs.RunAll`:
+
+``````go
+package main
+
+import (
+	"context"
+	"log"
+
+	gosqs "github.com/inaciogu/go-sqs"
+)
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	consumer1, err := gosqs.NewConsumer(func(ctx context.Context, message *gosqs.Message) error {
+		return nil
+	}, gosqs.ConsumerOptions{
+		QueueName: "test_queue_1",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	consumer2, err := gosqs.NewConsumer(func(ctx context.Context, message *gosqs.Message) error {
+		return nil
+	}, gosqs.ConsumerOptions{
+		QueueName: "test_queue_2",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := gosqs.RunAll(ctx, consumer1, consumer2); err != nil {
+		log.Fatal(err)
+	}
+}
+``````
+
 If you want to consume queues by a prefix, you can just set the `PrefixBased` option to `true` Then, the `QueueName` will be used as a prefix to find all queues that match the prefix.
 
 ### Configuration

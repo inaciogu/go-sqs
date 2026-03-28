@@ -1,11 +1,12 @@
-package message_test
+package gosqs_test
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/inaciogu/go-sqs/consumer/message"
+	gosqs "github.com/inaciogu/go-sqs"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -30,11 +31,29 @@ func (u *UnitTest) TestSQSMessage() {
 		},
 	}
 
-	message := message.New(&sqsMessage)
+	message := gosqs.NewMessage(&sqsMessage)
 
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
 	u.Equal(`{"content": "fake-content"}`, message.Content)
+}
+
+func (u *UnitTest) TestSQSMessageBinaryAttribute() {
+	sqsMessage := sqs.Message{
+		MessageId:     aws.String("message-id"),
+		ReceiptHandle: aws.String("receipt-handle"),
+		Body:          aws.String(`{"content": "fake-content"}`),
+		MessageAttributes: map[string]*sqs.MessageAttributeValue{
+			"binary-attribute": {
+				DataType:    aws.String("Binary"),
+				BinaryValue: []byte("hello"),
+			},
+		},
+	}
+
+	message := gosqs.NewMessage(&sqsMessage)
+
+	u.Equal(base64.StdEncoding.EncodeToString([]byte("hello")), message.Metadata.MessageAttributes["binary-attribute"])
 }
 
 func (u *UnitTest) TestSNSMessage() {
@@ -57,7 +76,7 @@ func (u *UnitTest) TestSNSMessage() {
 		`),
 	}
 
-	message := message.New(&snsMessage)
+	message := gosqs.NewMessage(&snsMessage)
 
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
@@ -78,7 +97,7 @@ func (u *UnitTest) TestSNSWithoutMessageAttributes() {
 		`),
 	}
 
-	message := message.New(&snsMessage)
+	message := gosqs.NewMessage(&snsMessage)
 
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
@@ -103,7 +122,7 @@ func (u *UnitTest) TestUnmarshal() {
 		`),
 	}
 
-	message := message.New(&snsMessage)
+	message := gosqs.NewMessage(&snsMessage)
 
 	User := struct {
 		Name string `json:"name"`
@@ -127,7 +146,7 @@ func (u *UnitTest) TestUnmarshalWithError() {
 		Body:          aws.String("not a json"),
 	}
 
-	message := message.New(&snsMessage)
+	message := gosqs.NewMessage(&snsMessage)
 
 	User := struct {
 		Email string `json:"email"`

@@ -3,7 +3,7 @@ package logger_test
 import (
 	"testing"
 
-	"github.com/inaciogu/go-sqs/consumer/logger"
+	"github.com/inaciogu/go-sqs/logger"
 	"github.com/stretchr/testify/suite"
 )
 

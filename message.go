@@ -1,7 +1,9 @@
-package message
+package gosqs
 
 import (
+	"encoding/base64"
 	"encoding/json"
+
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
@@ -33,11 +35,19 @@ const (
 	SNS = "SNS"
 )
 
-func New(sqsMessage *sqs.Message) *Message {
+func NewMessage(sqsMessage *sqs.Message) *Message {
 	content := getContent(sqsMessage)
+	var messageID *string
+	var receiptHandle *string
+
+	if sqsMessage != nil {
+		messageID = sqsMessage.MessageId
+		receiptHandle = sqsMessage.ReceiptHandle
+	}
+
 	metadata := MessageMetadata{
-		MessageId:         *sqsMessage.MessageId,
-		ReceiptHandle:     *sqsMessage.ReceiptHandle,
+		MessageId:         getStringValue(messageID),
+		ReceiptHandle:     getStringValue(receiptHandle),
 		MessageAttributes: getMessageAttributes(sqsMessage),
 	}
 
@@ -48,6 +58,10 @@ func New(sqsMessage *sqs.Message) *Message {
 }
 
 func getMessageSource(sqsMessage *sqs.Message) string {
+	if sqsMessage == nil || sqsMessage.Body == nil {
+		return SQS
+	}
+
 	snsBody := SNSMessageBody{}
 
 	err := json.Unmarshal([]byte(*sqsMessage.Body), &snsBody)
@@ -64,6 +78,10 @@ func getMessageSource(sqsMessage *sqs.Message) string {
 }
 
 func getContent(sqsMessage *sqs.Message) string {
+	if sqsMessage == nil || sqsMessage.Body == nil {
+		return ""
+	}
+
 	messageSource := getMessageSource(sqsMessage)
 
 	if messageSource == SNS {
@@ -77,17 +95,47 @@ func getContent(sqsMessage *sqs.Message) string {
 	return *sqsMessage.Body
 }
 
+func getStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
+}
+
+func getAttributeValue(value *sqs.MessageAttributeValue) string {
+	if value == nil {
+		return ""
+	}
+
+	if value.StringValue != nil {
+		return *value.StringValue
+	}
+
+	if len(value.BinaryValue) > 0 {
+		return base64.StdEncoding.EncodeToString(value.BinaryValue)
+	}
+
+	return ""
+}
+
 func getMessageAttributes(message *sqs.Message) map[string]string {
 	attributes := make(map[string]string)
+	if message == nil {
+		return attributes
+	}
+
 	messageSource := getMessageSource(message)
 
 	for key, value := range message.Attributes {
-		attributes[key] = *value
+		if value != nil {
+			attributes[key] = *value
+		}
 	}
 
 	if messageSource == SQS {
 		for key, value := range message.MessageAttributes {
-			attributes[key] = *value.StringValue
+			attributes[key] = getAttributeValue(value)
 		}
 
 		return attributes
