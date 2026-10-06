@@ -3,26 +3,35 @@ package gosqs
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-type MessageAttributes map[string]Attribute
+// MessageFormat selects payload interpretation. The zero value preserves SQS bodies.
+type MessageFormat int
 
+const (
+	MessageFormatSQS MessageFormat = iota
+	MessageFormatSNS
+)
+
+// Attribute preserves the SDK data type and its string or binary value.
 type Attribute struct {
-	Type  string
-	Value string
+	DataType    string
+	StringValue *string
+	BinaryValue []byte
 }
 
 type MessageMetadata struct {
-	MessageId         string
+	MessageID         string
 	ReceiptHandle     string
-	MessageAttributes map[string]string
-}
-
-type SNSMessageBody struct {
-	MessageAttributes MessageAttributes
-	Message           string
+	QueueURL          string
+	SystemAttributes  map[string]string
+	MessageAttributes map[string]Attribute
 }
 
 type Message struct {
@@ -30,134 +39,69 @@ type Message struct {
 	Metadata MessageMetadata
 }
 
-const (
-	SQS = "SQS"
-	SNS = "SNS"
-)
-
-func NewMessage(sqsMessage *sqs.Message) *Message {
-	content := getContent(sqsMessage)
-	var messageID *string
-	var receiptHandle *string
-
-	if sqsMessage != nil {
-		messageID = sqsMessage.MessageId
-		receiptHandle = sqsMessage.ReceiptHandle
+// NewMessage copies a raw SQS message without automatically unwrapping SNS.
+func NewMessage(raw *types.Message) *Message {
+	m := &Message{Metadata: MessageMetadata{SystemAttributes: map[string]string{}, MessageAttributes: map[string]Attribute{}}}
+	if raw == nil {
+		return m
 	}
-
-	metadata := MessageMetadata{
-		MessageId:         getStringValue(messageID),
-		ReceiptHandle:     getStringValue(receiptHandle),
-		MessageAttributes: getMessageAttributes(sqsMessage),
+	m.Content = aws.ToString(raw.Body)
+	m.Metadata.MessageID = aws.ToString(raw.MessageId)
+	m.Metadata.ReceiptHandle = aws.ToString(raw.ReceiptHandle)
+	for k, v := range raw.Attributes {
+		m.Metadata.SystemAttributes[k] = v
 	}
-
-	return &Message{
-		Content:  content,
-		Metadata: metadata,
+	for k, v := range raw.MessageAttributes {
+		attr := Attribute{DataType: aws.ToString(v.DataType), BinaryValue: append([]byte(nil), v.BinaryValue...)}
+		if v.StringValue != nil {
+			attr.StringValue = aws.String(*v.StringValue)
+		}
+		m.Metadata.MessageAttributes[k] = attr
 	}
+	return m
 }
 
-func getMessageSource(sqsMessage *sqs.Message) string {
-	if sqsMessage == nil || sqsMessage.Body == nil {
-		return SQS
-	}
-
-	snsBody := SNSMessageBody{}
-
-	err := json.Unmarshal([]byte(*sqsMessage.Body), &snsBody)
-
-	if err != nil {
-		return SQS
-	}
-
-	if snsBody.Message != "" {
-		return SNS
-	}
-
-	return SQS
-}
-
-func getContent(sqsMessage *sqs.Message) string {
-	if sqsMessage == nil || sqsMessage.Body == nil {
-		return ""
-	}
-
-	messageSource := getMessageSource(sqsMessage)
-
-	if messageSource == SNS {
-		snsBody := SNSMessageBody{}
-
-		json.Unmarshal([]byte(*sqsMessage.Body), &snsBody)
-
-		return snsBody.Message
-	}
-
-	return *sqsMessage.Body
-}
-
-func getStringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-
-	return *value
-}
-
-func getAttributeValue(value *sqs.MessageAttributeValue) string {
-	if value == nil {
-		return ""
-	}
-
-	if value.StringValue != nil {
-		return *value.StringValue
-	}
-
-	if len(value.BinaryValue) > 0 {
-		return base64.StdEncoding.EncodeToString(value.BinaryValue)
-	}
-
-	return ""
-}
-
-func getMessageAttributes(message *sqs.Message) map[string]string {
-	attributes := make(map[string]string)
-	if message == nil {
-		return attributes
-	}
-
-	messageSource := getMessageSource(message)
-
-	for key, value := range message.Attributes {
-		if value != nil {
-			attributes[key] = *value
+func unwrapSNS(m *Message) error {
+	var envelope struct {
+		Type              string
+		TopicArn          string
+		MessageId         string
+		Message           *string
+		MessageAttributes map[string]struct {
+			Type  string
+			Value string
 		}
 	}
-
-	if messageSource == SQS {
-		for key, value := range message.MessageAttributes {
-			attributes[key] = getAttributeValue(value)
+	if err := json.Unmarshal([]byte(m.Content), &envelope); err != nil {
+		return fmt.Errorf("invalid SNS envelope: %w", err)
+	}
+	if envelope.Type != "Notification" || envelope.TopicArn == "" || envelope.MessageId == "" || envelope.Message == nil {
+		return errors.New("SNS notification requires Type, TopicArn, MessageId, and Message")
+	}
+	attributes := make(map[string]Attribute, len(envelope.MessageAttributes))
+	for k, v := range envelope.MessageAttributes {
+		attr := Attribute{DataType: v.Type}
+		switch strings.Split(v.Type, ".")[0] {
+		case "Binary":
+			decoded, err := base64.StdEncoding.DecodeString(v.Value)
+			if err != nil {
+				return fmt.Errorf("invalid binary SNS attribute %q: %w", k, err)
+			}
+			attr.BinaryValue = decoded
+		case "String", "String.Array", "Number":
+			attr.StringValue = aws.String(v.Value)
+		default:
+			return fmt.Errorf("invalid SNS attribute type %q", v.Type)
 		}
-
-		return attributes
+		attributes[k] = attr
 	}
-
-	var messageBody SNSMessageBody
-
-	json.Unmarshal([]byte(*message.Body), &messageBody)
-
-	for key, attribute := range messageBody.MessageAttributes {
-		attributes[key] = attribute.Value
+	m.Content = *envelope.Message
+	// Preserve SQS custom attributes, with SNS payload attributes taking precedence.
+	for k, v := range attributes {
+		m.Metadata.MessageAttributes[k] = v
 	}
-
-	return attributes
-}
-
-func (m *Message) Unmarshal(v interface{}) error {
-	err := json.Unmarshal([]byte(m.Content), v)
-
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
+
+// Unmarshal decodes the effective message content into v.
+func (m *Message) Unmarshal(v any) error { return json.Unmarshal([]byte(m.Content), v) }

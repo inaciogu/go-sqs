@@ -1,161 +1,37 @@
 package gosqs_test
 
 import (
-	"encoding/base64"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	gosqs "github.com/inaciogu/go-sqs/v2"
+	"github.com/stretchr/testify/require"
 	"testing"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/sqs"
-	gosqs "github.com/inaciogu/go-sqs"
-	"github.com/stretchr/testify/suite"
 )
 
-type UnitTest struct {
-	suite.Suite
-}
-
-func TestUnitSuites(t *testing.T) {
-	suite.Run(t, &UnitTest{})
-}
-
-func (u *UnitTest) TestSQSMessage() {
-	sqsMessage := sqs.Message{
-		MessageId:     aws.String("message-id"),
-		ReceiptHandle: aws.String("receipt-handle"),
-		Body:          aws.String(`{"content": "fake-content"}`),
-		MessageAttributes: map[string]*sqs.MessageAttributeValue{
-			"attribute1": {
-				DataType:    aws.String("String"),
-				StringValue: aws.String("value1"),
-			},
-		},
+func TestNewMessagePreservesSQSAndCopiesAttributes(t *testing.T) {
+	raw := message(`{"Message":"text","orderId":123}`)
+	raw.MessageAttributes = map[string]types.MessageAttributeValue{
+		"text":                    {DataType: aws.String("String.custom"), StringValue: aws.String("value")},
+		"binary":                  {DataType: aws.String("Binary"), BinaryValue: []byte("hi")},
+		"ApproximateReceiveCount": {DataType: aws.String("Number"), StringValue: aws.String("99")},
 	}
-
-	message := gosqs.NewMessage(&sqsMessage)
-
-	u.Equal("message-id", message.Metadata.MessageId)
-	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
-	u.Equal(`{"content": "fake-content"}`, message.Content)
-}
-
-func (u *UnitTest) TestSQSMessageBinaryAttribute() {
-	sqsMessage := sqs.Message{
-		MessageId:     aws.String("message-id"),
-		ReceiptHandle: aws.String("receipt-handle"),
-		Body:          aws.String(`{"content": "fake-content"}`),
-		MessageAttributes: map[string]*sqs.MessageAttributeValue{
-			"binary-attribute": {
-				DataType:    aws.String("Binary"),
-				BinaryValue: []byte("hello"),
-			},
-		},
+	m := gosqs.NewMessage(&raw)
+	require.Equal(t, *raw.Body, m.Content)
+	require.Equal(t, "id", m.Metadata.MessageID)
+	require.Equal(t, "3", m.Metadata.SystemAttributes["ApproximateReceiveCount"])
+	require.Equal(t, "99", *m.Metadata.MessageAttributes["ApproximateReceiveCount"].StringValue)
+	require.Equal(t, "String.custom", m.Metadata.MessageAttributes["text"].DataType)
+	raw.MessageAttributes["binary"].BinaryValue[0] = 'x'
+	*raw.MessageAttributes["text"].StringValue = "changed"
+	raw.Attributes["ApproximateReceiveCount"] = "changed"
+	require.Equal(t, []byte("hi"), m.Metadata.MessageAttributes["binary"].BinaryValue)
+	require.Equal(t, "value", *m.Metadata.MessageAttributes["text"].StringValue)
+	require.Equal(t, "3", m.Metadata.SystemAttributes["ApproximateReceiveCount"])
+	var body struct {
+		OrderID int `json:"orderId"`
 	}
-
-	message := gosqs.NewMessage(&sqsMessage)
-
-	u.Equal(base64.StdEncoding.EncodeToString([]byte("hello")), message.Metadata.MessageAttributes["binary-attribute"])
-}
-
-func (u *UnitTest) TestSNSMessage() {
-	snsMessage := sqs.Message{
-		MessageId:     aws.String("message-id"),
-		ReceiptHandle: aws.String("receipt-handle"),
-		Attributes: map[string]*string{
-			"ApproximateReceiveCount": aws.String("1"),
-		},
-		Body: aws.String(`
-			{
-				"Message": "{\n  \"asda\": \"asdas\"\n}",
-				"MessageAttributes": {
-					"attribute1": {
-						"Type": "String",
-						"Value": "value1"
-					}
-				}
-			}
-		`),
-	}
-
-	message := gosqs.NewMessage(&snsMessage)
-
-	u.Equal("message-id", message.Metadata.MessageId)
-	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
-	u.Equal("{\n  \"asda\": \"asdas\"\n}", message.Content)
-	u.Equal(2, len(message.Metadata.MessageAttributes))
-	u.Equal("value1", message.Metadata.MessageAttributes["attribute1"])
-	u.Equal("1", message.Metadata.MessageAttributes["ApproximateReceiveCount"])
-}
-
-func (u *UnitTest) TestSNSWithoutMessageAttributes() {
-	snsMessage := sqs.Message{
-		MessageId:     aws.String("message-id"),
-		ReceiptHandle: aws.String("receipt-handle"),
-		Body: aws.String(`
-			{
-				"Message": "{\n  \"asda\": \"asdas\"\n}"
-			}
-		`),
-	}
-
-	message := gosqs.NewMessage(&snsMessage)
-
-	u.Equal("message-id", message.Metadata.MessageId)
-	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
-	u.Equal("{\n  \"asda\": \"asdas\"\n}", message.Content)
-	u.Equal(0, len(message.Metadata.MessageAttributes))
-}
-
-func (u *UnitTest) TestUnmarshal() {
-	snsMessage := sqs.Message{
-		MessageId:     aws.String("message-id"),
-		ReceiptHandle: aws.String("receipt-handle"),
-		Body: aws.String(`
-			{
-				"Message": "{\n  \"name\": \"test\"\n}",
-				"MessageAttributes": {
-					"attribute1": {
-						"Type": "String",
-						"Value": "value1"
-					}
-				}
-			}
-		`),
-	}
-
-	message := gosqs.NewMessage(&snsMessage)
-
-	User := struct {
-		Name string `json:"name"`
-	}{}
-
-	message.Unmarshal(&User)
-
-	u.Equal("message-id", message.Metadata.MessageId)
-	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
-	u.Equal("{\n  \"name\": \"test\"\n}", message.Content)
-	u.Equal(1, len(message.Metadata.MessageAttributes))
-	u.Equal("value1", message.Metadata.MessageAttributes["attribute1"])
-
-	u.Equal("test", User.Name)
-}
-
-func (u *UnitTest) TestUnmarshalWithError() {
-	snsMessage := sqs.Message{
-		MessageId:     aws.String("message-id"),
-		ReceiptHandle: aws.String("receipt-handle"),
-		Body:          aws.String("not a json"),
-	}
-
-	message := gosqs.NewMessage(&snsMessage)
-
-	User := struct {
-		Email string `json:"email"`
-	}{}
-
-	err := message.Unmarshal(&User)
-
-	u.Equal("message-id", message.Metadata.MessageId)
-	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
-	u.Equal("not a json", message.Content)
-	u.NotNil(err)
+	require.NoError(t, m.Unmarshal(&body))
+	require.Equal(t, 123, body.OrderID)
+	require.Empty(t, gosqs.NewMessage(nil).Content)
+	require.Error(t, (&gosqs.Message{Content: "invalid"}).Unmarshal(&body))
 }

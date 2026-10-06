@@ -1,154 +1,219 @@
-[![Maintainability](https://api.codeclimate.com/v1/badges/9693cf5c61dc08d04fd5/maintainability)](https://codeclimate.com/github/inaciogu/go-sqs-consumer/maintainability)
-[![Test Coverage](https://api.codeclimate.com/v1/badges/9693cf5c61dc08d04fd5/test_coverage)](https://codeclimate.com/github/inaciogu/go-sqs-consumer/test_coverage)
+# go-sqs v2
 
-## gosqs
+A Go library for consuming Amazon SQS messages with bounded concurrency,
+explicit payload decoding, and graceful shutdown. Requires Go 1.25 or newer.
 
-### 🌟Description
-This is a simple package to help you consume messages from AWS SQS.
+```sh
+go get github.com/inaciogu/go-sqs/v2
+```
 
-### 🚀Features
-- [x] Consume messages in parallel
-- [x] Consume messages from different defined queues
-- [x] Consume messages from different queues by a prefix
-- [x] Error handling
-- [x] Message unmarshalling
-- [x] Message deletion
-- [x] Logging
+## Usage
 
+Construct a consumer with queue configuration and a handler, then call `Run`.
+Queue discovery and message acknowledgement are handled internally.
 
-### Installation
-This library requires Go 1.25 or newer.
-To install the package, use the following command:
-
-``````shell
-go get github.com/inaciogu/go-sqs
-``````
-
-### Usage
-
-``````go
+```go
 package main
 
 import (
-	"context"
-	"log"
+    "context"
+    "errors"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	gosqs "github.com/inaciogu/go-sqs"
+    gosqs "github.com/inaciogu/go-sqs/v2"
 )
 
 func main() {
-	client, err := gosqs.NewConsumer(func(ctx context.Context, msg *gosqs.Message) error {
-		return nil
-	}, gosqs.ConsumerOptions{
-		QueueName: "test_queue",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+    runCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer stop()
 
-	if err := client.Run(context.Background()); err != nil {
-		log.Fatal(err)
-	}
+    initCtx, cancelInit := context.WithTimeout(context.Background(), 5*time.Second)
+    consumer, err := gosqs.NewConsumer(initCtx, handleOrder, gosqs.ConsumerOptions{
+        QueueName: "orders",
+        MaxConcurrency: 10,
+    })
+    cancelInit()
+    if err != nil {
+        log.Print(err)
+        return
+    }
+    if err := consumer.Run(runCtx); err != nil {
+        // A shutdown timeout must still be reported even if it includes cancellation.
+        if errors.Is(err, gosqs.ErrShutdownTimeout) || !errors.Is(err, context.Canceled) {
+            log.Print(err)
+        }
+    }
 }
 
-``````
-### New API
-If you want a more idiomatic, context-first interface, you can use `gosqs.NewConsumer`.
-Return `nil` from the handler to delete the message, or return `gosqs.ErrDrop` to delete it without retrying. Any other error will trigger the retry/backoff path.
-
-``````go
-package main
-
-import (
-	"context"
-	"log"
-
-	gosqs "github.com/inaciogu/go-sqs"
-)
-
-func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	client, err := gosqs.NewConsumer(func(ctx context.Context, message *gosqs.Message) error {
-		return nil
-	}, gosqs.ConsumerOptions{
-		QueueName: "test_queue",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := client.Run(ctx); err != nil {
-		log.Fatal(err)
-	}
+func handleOrder(ctx context.Context, message *gosqs.Message) error {
+    var order struct { ID string `json:"id"` }
+    if err := message.Unmarshal(&order); err != nil {
+        return err
+    }
+    // Perform idempotent work using ctx. The handler can run concurrently.
+    return nil
 }
-``````
+```
 
-If you want to run multiple consumers in parallel, use `gosqs.RunAll`:
+The constructor context controls AWS configuration loading and is not stored.
+`Run` accepts an independent execution context. You can also pass the same context
+to both when their lifetimes match.
 
-``````go
-package main
+## Configuration
 
-import (
-	"context"
-	"log"
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `QueueName` / `QueuePrefix` | Required | Set exactly one. Prefix discovery happens once per Run. |
+| `Region` | SDK configuration | An explicit value overrides environment/profile configuration. |
+| `Endpoint` | AWS endpoint | Custom SQS base endpoint, such as LocalStack. |
+| `Client` | SDK v2 SQS client | Injection skips AWS loading; cannot combine with Region or Endpoint. |
+| `Logger` | JSON slog logger on stderr | An injected logger keeps its own filters and handler. |
+| `LogLevel` | `slog.LevelInfo` | Filter for the default logger only. |
+| `MaxNumberOfMessages` | 10 | Maximum received batch, between 1 and 10. |
+| `MaxConcurrency` | 10 | Global capacity per consumer, including polling reservations and confirmations. |
+| `VisibilityTimeout` | 30 seconds | Optional duration; whole seconds from zero to 12 hours. |
+| `WaitTime` | 20 seconds | Optional duration; whole seconds from zero to 20 seconds. |
+| `ShutdownTimeout` | 30 seconds | Optional nonnegative duration for draining work. |
+| `BackoffMultiplier` | 2 | Finite multiplier of at least 1; zero selects the default. |
+| `MessageFormat` | `MessageFormatSQS` | Preserve SQS payloads, or explicitly unwrap SNS. |
+| `OnError` | None | Concurrent processing-error callback; must return promptly. |
 
-	gosqs "github.com/inaciogu/go-sqs"
-)
+Nil duration pointers select defaults. `gosqs.Duration(0)` sets an explicit zero.
+Options are copied at construction; changing an original duration afterward does
+not change the consumer. SDK credentials use the default AWS chain, including
+shared profiles and IAM roles. Configure a region in the environment/profile or
+provide `Region`; the library does not supply a default region.
 
-func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	consumer1, err := gosqs.NewConsumer(func(ctx context.Context, message *gosqs.Message) error {
-		return nil
-	}, gosqs.ConsumerOptions{
-		QueueName: "test_queue_1",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	consumer2, err := gosqs.NewConsumer(func(ctx context.Context, message *gosqs.Message) error {
-		return nil
-	}, gosqs.ConsumerOptions{
-		QueueName: "test_queue_2",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := gosqs.RunAll(ctx, consumer1, consumer2); err != nil {
-		log.Fatal(err)
-	}
+```go
+options := gosqs.ConsumerOptions{
+    QueueName: "orders",
+    WaitTime: gosqs.Duration(0),
+    VisibilityTimeout: gosqs.Duration(2*time.Minute),
+    ShutdownTimeout: gosqs.Duration(45*time.Second),
 }
-``````
+```
 
-If you want to consume queues by a prefix, you can just set the `PrefixBased` option to `true` Then, the `QueueName` will be used as a prefix to find all queues that match the prefix.
+## Handler results and errors
 
-### Configuration
-To give the package access to your AWS account, you can use the following environment variables:
+| Handler result | Action |
+| --- | --- |
+| `nil` | Attempt to delete the message. |
+| `ErrDrop`, including wrapped errors | Attempt to delete without retry. This does not send to a DLQ. |
+| Any other error | Attempt to change visibility for a later delivery. |
 
-``````shell
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
-``````
+Handler success does not guarantee that deletion succeeds. Make processing
+idempotent: messages may be delivered again. Configure DLQ redrive policies on SQS.
+Backoff uses the system `ApproximateReceiveCount`, is capped by the remaining
+visibility budget, and does not rerun the handler locally.
 
-### Contribution
-If you want to contribute to the development of this package, follow these steps:
+Decode, handler, deletion, and visibility errors are logged and delivered to
+`OnError` as `*gosqs.OperationError`. It exposes `Operation`, `QueueURL`, `MessageID`,
+and the underlying `Err`, supporting `errors.Is` and `errors.As`. Operations are
+`decode`, `handler`, `delete`, and `change_visibility`. These failures do not stop
+the consumer. The callback shares the message's processing context, can run
+concurrently, and is included in the shutdown deadline.
 
-- Fork the repository
-- Create a new branch (git checkout -b feature/new-feature)
-- Commit your changes (git commit -m 'Add new feature')
-- Push to the branch (git push origin feature/new-feature)
-- Open a Pull Request
+```go
+options.OnError = func(ctx context.Context, err error) {
+    var event *gosqs.OperationError
+    if errors.As(err, &event) {
+        // Record a metric or send to the application's error reporter.
+        // Avoid blocking and protect shared state.
+    }
+}
+```
 
-### Running locally
-To use this package locally (without using your own AWS account) you can execute the `docker compose up` command that will run the [localstack](https://www.localstack.cloud/) and execute terraform commands to deploy the infra configured in `/iac/terraform/main.tf` locally.
+Discovery and polling errors, after the SDK's own retries, stop `Run` and initiate
+drainage. The library does not continuously restart failed polling. A prefix with
+no matching queues returns `ErrNoQueues`.
 
-### License
-This package is distributed under the **MIT** license. See the LICENSE file for more information.
+## Shutdown and concurrency
 
-### Contact
-Gustavo Inacio - [Linkedin](https://linkedin.com/in/inaciogu)
+Cancellation stops new polling and waits for active handlers and confirmations.
+Processing contexts preserve values from `Run` but stay live during drainage;
+handlers can finish their work and delete messages before the deadline.
+At `ShutdownTimeout`, processing contexts are cancelled and `Run` returns an error
+matching both `ErrShutdownTimeout` and the original stopping cause.
+
+Go cannot forcibly terminate a handler or callback that ignores context. Such
+work may outlive `Run`, and a new call returns `ErrAlreadyRunning` until all old
+workers and pollers exit. Never copy a Consumer after use. Completed consumers can
+be run again; discovery is repeated for each execution.
+
+Capacity is reserved before each receive request, released for empty/partial
+batches, and held through processing and acknowledgement. Prefix queues share
+one capacity pool; long polls also occupy reservations. There is no per-queue
+fairness guarantee. Cancellation interrupts requests and capacity waits.
+
+Handlers must finish within the configured visibility timeout. Visibility is not
+automatically renewed. The consumer does not guarantee FIFO processing order:
+messages in a group may be handled concurrently. Use this library for workloads
+that tolerate concurrent, idempotent processing.
+
+## Prefixes and multiple consumers
+
+```go
+consumer, err := gosqs.NewConsumer(initCtx, handler, gosqs.ConsumerOptions{
+    QueuePrefix: "orders-",
+    MaxConcurrency: 20, // Shared across all matching queues, not 20 per queue.
+})
+```
+
+For different queue handlers, construct separate consumers and use:
+
+```go
+err := gosqs.RunAll(runCtx, orderConsumer, paymentConsumer)
+```
+
+Each consumer has its own concurrency limit. An error cancels sibling polling;
+`RunAll` waits for their drainage and aggregates shutdown failures with the
+initiating error.
+
+## SQS and SNS messages
+
+By default, `Content` is the exact SQS body, even when JSON contains `Message`.
+To consume SNS notification envelopes, set `MessageFormat: gosqs.MessageFormatSNS`.
+SNS raw message delivery should use the default SQS format.
+
+SNS mode requires `Type: Notification`, `TopicArn`, `MessageId`, and `Message`.
+An empty message is valid. Invalid envelopes skip the handler and follow the
+retry/error-reporting path. `NewMessage(*types.Message)` always preserves the raw
+SQS payload and copies attributes; SNS parsing is internal to the consumer.
+
+Metadata exposes the SQS `MessageID`, `ReceiptHandle`, `QueueURL`, `SystemAttributes`,
+and typed `MessageAttributes`. `Attribute` preserves `DataType`, `StringValue`, and
+`BinaryValue`. SNS binary attributes are decoded from Base64. SNS payload
+attributes override same-named SQS custom attributes; system attributes remain
+separate and cannot be overridden by custom attributes.
+
+## Logging
+
+Inject a `*slog.Logger` to use your application's logging pipeline. Default logging
+uses Debug for polling/acknowledgement, Warn for handler failures, and Error for
+operational failures. Logs identify operation, queue, and message ID, omitting
+payload, receipt handle, and arbitrary error text. Original errors remain available
+through `OnError` and returned errors. There are no panic/fatal log operations.
+
+## Local development and validation
+
+```sh
+docker compose up
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 go run ./your-app
+```
+
+Use `Region: "us-east-1"` and `Endpoint: "http://localhost:4566"` in the local
+consumer configuration. The compose setup provisions SQS queues and SNS
+subscriptions through Terraform; clients on the host use the published port.
+
+```sh
+go test -race ./...
+go vet ./...
+```
+
+Tests use synchronized clients and a local HTTP server for SDK integration,
+without requiring an AWS account. See [MIGRATING.md](MIGRATING.md) for v1 migration.
+The library uses the MIT license.

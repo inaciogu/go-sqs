@@ -1,5 +1,5 @@
 name: Test
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build:
@@ -15,8 +15,10 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: Install dependencies
-        run: go get ./...
+        run: go mod download
       - name: Build
         run: go build -v ./...
       - name: Run tests
-        run: go test -v ./...
+        run: go test -race -v ./...
+      - name: Vet
+        run: go vet ./...
