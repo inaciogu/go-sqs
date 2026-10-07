@@ -18,13 +18,15 @@ import (
 // Client and Logger are optional. OnError runs concurrently in message workers and
 // must return promptly. It is included in the shutdown deadline.
 type ConsumerOptions struct {
-	QueueName           string
-	QueuePrefix         string
-	Region              string
-	Endpoint            string
-	Client              QueueClient
-	Logger              *slog.Logger
-	LogLevel            slog.Level
+	QueueName   string
+	QueuePrefix string
+	Region      string
+	Endpoint    string
+	Client      QueueClient
+	Logger      *slog.Logger
+	LogLevel    slog.Level
+	// Telemetry enables metrics and the default OTel log bridge using global providers.
+	Telemetry           bool
 	MaxNumberOfMessages int
 	MaxConcurrency      int
 	VisibilityTimeout   *time.Duration
@@ -139,9 +141,21 @@ func NewConsumer(ctx context.Context, handler MessageHandler, options ConsumerOp
 			}
 		})
 	}
+	var telemetry *consumerTelemetry
+	if options.Telemetry {
+		var err error
+		telemetry, err = newConsumerTelemetry(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("initialize telemetry: %w", err)
+		}
+	}
 	log := options.Logger
 	if log == nil {
-		log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: options.LogLevel}))
+		if options.Telemetry {
+			log = telemetryLogger(options.LogLevel)
+		} else {
+			log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: options.LogLevel}))
+		}
 	}
-	return &Consumer{client: client, config: cfg, handler: handler, logger: log}, nil
+	return &Consumer{client: client, config: cfg, handler: handler, logger: log, telemetry: telemetry}, nil
 }

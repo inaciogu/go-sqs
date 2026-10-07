@@ -53,12 +53,13 @@ func (e *OperationError) Unwrap() error { return e.Err }
 // Consumer is configured by NewConsumer. Do not copy a Consumer after use.
 // Run calls are exclusive, including work that outlives a shutdown timeout.
 type Consumer struct {
-	client  QueueClient
-	config  consumerConfig
-	handler MessageHandler
-	logger  *slog.Logger
-	mu      sync.Mutex
-	running bool
+	client    QueueClient
+	config    consumerConfig
+	handler   MessageHandler
+	logger    *slog.Logger
+	telemetry *consumerTelemetry
+	mu        sync.Mutex
+	running   bool
 }
 
 func (c *Consumer) queueURLs(ctx context.Context) ([]string, error) {
@@ -68,7 +69,7 @@ func (c *Consumer) queueURLs(ctx context.Context) ([]string, error) {
 			return nil, &OperationError{Operation: "get_queue_url", Err: err}
 		}
 		if result == nil || aws.ToString(result.QueueUrl) == "" {
-			return nil, errors.New("SQS returned an empty queue URL")
+			return nil, errInvalidQueueURL
 		}
 		return []string{*result.QueueUrl}, nil
 	}
@@ -108,6 +109,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 		finish()
 		return err
 	}
+	// Previous workers have exited before another Run can start.
+	if c.telemetry != nil {
+		c.telemetry.queues.Clear()
+	}
 	pollCtx, stopPolling := context.WithCancel(ctx)
 	defer stopPolling()
 	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
@@ -127,6 +132,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		cause = ctx.Err()
 	case cause = <-errs:
 	}
+	shutdownStart := c.telemetry.start()
 	stopPolling()
 	c.logRunError(ctx, cause)
 	done := make(chan struct{})
@@ -140,6 +146,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	// Prefer completed drainage even when the configured deadline is zero.
 	select {
 	case <-done:
+		c.telemetry.shutdown(ctx, shutdownStart, "complete")
 		return cause
 	default:
 	}
@@ -147,16 +154,21 @@ func (c *Consumer) Run(ctx context.Context) error {
 	defer timer.Stop()
 	select {
 	case <-done:
+		c.telemetry.shutdown(ctx, shutdownStart, "complete")
 		return cause
 	case <-timer.C:
 		cancelWork()
+		c.telemetry.shutdown(ctx, shutdownStart, "timeout")
+		c.telemetry.failure(ctx, nil, "shutdown", ErrShutdownTimeout, true)
 		c.logger.ErrorContext(ctx, "consumer shutdown timed out", "operation", "shutdown")
 		return errors.Join(cause, ErrShutdownTimeout)
 	}
 }
 
 func (c *Consumer) poll(ctx, workCtx context.Context, url string, capacity chan struct{}, workers *sync.WaitGroup) error {
+	queue := c.telemetry.queue(url)
 	release := func(n int) {
+		c.telemetry.capacityChange(ctx, -int64(n))
 		for i := 0; i < n; i++ {
 			capacity <- struct{}{}
 		}
@@ -171,12 +183,14 @@ func (c *Consumer) poll(ctx, workCtx context.Context, url string, capacity chan 
 			return ctx.Err()
 		case <-capacity:
 			reserved = 1
+			c.telemetry.capacityChange(ctx, 1)
 		}
 	reserve:
 		for reserved < c.config.maxNumberOfMessages {
 			select {
 			case <-capacity:
 				reserved++
+				c.telemetry.capacityChange(ctx, 1)
 			default:
 				break reserve
 			}
@@ -187,19 +201,22 @@ func (c *Consumer) poll(ctx, workCtx context.Context, url string, capacity chan 
 		}
 		receivedAt := time.Now()
 		c.logger.DebugContext(ctx, "polling messages", "operation", "receive", "queue_url", url)
+		operationStart := c.telemetry.start()
 		result, err := c.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl: aws.String(url), MaxNumberOfMessages: int32(reserved),
 			VisibilityTimeout: int32(c.config.visibilityTimeout / time.Second), WaitTimeSeconds: int32(c.config.waitTime / time.Second),
 			MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll}, MessageAttributeNames: []string{"All"},
 		})
+		if err == nil && (result == nil || len(result.Messages) > reserved) {
+			err = errInvalidReceive
+		}
+		c.telemetry.operation(ctx, queue, "ReceiveMessage", "receive", operationStart, err)
 		if err != nil {
+			c.telemetry.failure(ctx, queue, "receive", err, ctx.Err() != nil)
 			release(reserved)
 			return &OperationError{Operation: "receive", QueueURL: url, Err: err}
 		}
-		if result == nil || len(result.Messages) > reserved {
-			release(reserved)
-			return errors.New("invalid SQS receive response")
-		}
+		c.telemetry.received(ctx, queue, int64(len(result.Messages)))
 		release(reserved - len(result.Messages))
 		for i := range result.Messages {
 			if ctx.Err() != nil {
@@ -218,7 +235,7 @@ func (c *Consumer) poll(ctx, workCtx context.Context, url string, capacity chan 
 }
 
 func (c *Consumer) logRunError(ctx context.Context, err error) {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil {
 		return
 	}
 	operation, url := "discover", ""
@@ -226,10 +243,18 @@ func (c *Consumer) logRunError(ctx context.Context, err error) {
 	if errors.As(err, &event) {
 		operation, url = event.Operation, event.QueueURL
 	}
+	// Receive failures are counted by each poller, including simultaneous failures.
+	if operation != "receive" {
+		c.telemetry.failure(ctx, c.telemetry.queue(url), operation, err, ctx.Err() != nil)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
 	c.logger.ErrorContext(ctx, "consumer operation failed", "operation", operation, "queue_url", url)
 }
 
 func (c *Consumer) report(ctx context.Context, op, url, id string, err error) {
+	c.telemetry.failure(ctx, c.telemetry.queue(url), op, err, false)
 	event := &OperationError{Operation: op, QueueURL: url, MessageID: id, Err: err}
 	level := slog.LevelError
 	if op == "handler" {
@@ -244,6 +269,9 @@ func (c *Consumer) report(ctx context.Context, op, url, id string, err error) {
 }
 
 func (c *Consumer) handleMessage(ctx context.Context, url string, raw *types.Message, receivedAt time.Time) {
+	queue := c.telemetry.queue(url)
+	c.telemetry.workerChange(ctx, 1)
+	defer c.telemetry.workerChange(ctx, -1)
 	msg := NewMessage(raw)
 	msg.Metadata.QueueURL = url
 	// Keep receipt and retry state independent of metadata edited by a handler.
@@ -258,9 +286,13 @@ func (c *Consumer) handleMessage(ctx context.Context, url string, raw *types.Mes
 			return
 		}
 	}
+	handlerStart := c.telemetry.start()
 	err := c.handler(ctx, msg)
+	c.telemetry.process(ctx, queue, handlerStart, err)
 	if err == nil || errors.Is(err, ErrDrop) {
+		operationStart := c.telemetry.start()
 		_, err = c.client.DeleteMessage(ctx, &sqs.DeleteMessageInput{QueueUrl: aws.String(url), ReceiptHandle: aws.String(delivery.Metadata.ReceiptHandle)})
+		c.telemetry.operation(ctx, queue, "DeleteMessage", "settle", operationStart, err)
 		if err != nil {
 			c.report(ctx, "delete", url, delivery.Metadata.MessageID, err)
 		} else {
@@ -280,13 +312,15 @@ func (c *Consumer) retryMessage(ctx context.Context, msg *Message, receivedAt ti
 	// Start the 12-hour budget before ReceiveMessage and allow a safety second.
 	remaining := int64((12*time.Hour - time.Since(receivedAt) - time.Second) / time.Second)
 	if remaining <= 0 {
-		c.report(ctx, "change_visibility", msg.Metadata.QueueURL, msg.Metadata.MessageID, errors.New("visibility budget exhausted"))
+		c.report(ctx, "change_visibility", msg.Metadata.QueueURL, msg.Metadata.MessageID, errVisibilityBudget)
 		return
 	}
 	delay := math.Min(math.Pow(c.config.backoffMultiplier, float64(attempts)), float64(remaining))
+	operationStart := c.telemetry.start()
 	_, err = c.client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
 		QueueUrl: aws.String(msg.Metadata.QueueURL), ReceiptHandle: aws.String(msg.Metadata.ReceiptHandle), VisibilityTimeout: int32(delay),
 	})
+	c.telemetry.operation(ctx, c.telemetry.queue(msg.Metadata.QueueURL), "ChangeMessageVisibility", "settle", operationStart, err)
 	if err != nil {
 		c.report(ctx, "change_visibility", msg.Metadata.QueueURL, msg.Metadata.MessageID, err)
 	}
