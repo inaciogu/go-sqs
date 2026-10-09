@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,5 +58,43 @@ func TestDefaultLoggerFiltersByLevel(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, c.logger.Enabled(t.Context(), slog.LevelDebug))
 		require.Equal(t, level <= slog.LevelInfo, c.logger.Enabled(t.Context(), slog.LevelInfo))
+	}
+}
+
+// This receiver isolates cancellation while a send has no available dispatcher.
+type handoffClient struct {
+	QueueClient
+	received chan struct{}
+}
+
+func (c *handoffClient) ReceiveMessage(context.Context, *sqs.ReceiveMessageInput, ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+	close(c.received)
+	return &sqs.ReceiveMessageOutput{Messages: []types.Message{{}}}, nil
+}
+
+func TestPollCancellationWithoutChannelConsumer(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client := &handoffClient{received: make(chan struct{})}
+	c := &Consumer{client: client, config: consumerConfig{maxNumberOfMessages: 10}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	messages := make(chan delivery)
+	done := make(chan error, 1)
+	go func() { done <- c.poll(ctx, "queue", messages) }()
+	select {
+	case <-client.received:
+	case <-time.After(time.Second):
+		t.Fatal("receiver did not return its batch")
+	}
+	select {
+	case <-done:
+		t.Fatal("poll returned without channel handoff or cancellation")
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt channel handoff")
 	}
 }

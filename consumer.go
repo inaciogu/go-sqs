@@ -1,4 +1,4 @@
-// Package gosqs consumes SQS messages with bounded concurrency and graceful shutdown.
+// Package gosqs consumes SQS messages with concurrent receiving and graceful shutdown.
 package gosqs
 
 import (
@@ -111,15 +111,33 @@ func (c *Consumer) Run(ctx context.Context) error {
 	pollCtx, stopPolling := context.WithCancel(ctx)
 	defer stopPolling()
 	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
-	capacity := make(chan struct{}, c.config.maxConcurrency)
-	for i := 0; i < c.config.maxConcurrency; i++ {
-		capacity <- struct{}{}
-	}
+	// The channel synchronizes receiver handoff; it does not limit active handlers.
+	messages := make(chan delivery)
 	var polls, workers sync.WaitGroup
-	errs := make(chan error, len(urls))
-	polls.Add(len(urls))
+	dispatchDone := make(chan struct{})
+	go func() {
+		defer close(dispatchDone)
+		for message := range messages {
+			if workCtx.Err() != nil {
+				continue
+			}
+			workers.Add(1)
+			go func(message delivery) {
+				defer workers.Done()
+				c.handleMessage(workCtx, message.queueURL, &message.message, message.receivedAt)
+			}(message)
+		}
+	}()
+	pollCount := len(urls) * c.config.receiveWorkers
+	errs := make(chan error, pollCount)
+	polls.Add(pollCount)
 	for _, url := range urls {
-		go func(url string) { defer polls.Done(); errs <- c.poll(pollCtx, workCtx, url, capacity, &workers) }(url)
+		for i := 0; i < c.config.receiveWorkers; i++ {
+			go func(url string) {
+				defer polls.Done()
+				errs <- c.poll(pollCtx, url, messages)
+			}(url)
+		}
 	}
 	var cause error
 	select {
@@ -131,7 +149,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 	c.logRunError(ctx, cause)
 	done := make(chan struct{})
 	go func() {
-		polls.Wait() // No worker can be added after polling stops.
+		polls.Wait() // Only the receivers write to messages.
+		close(messages)
+		<-dispatchDone // No more workers.Add calls can race with workers.Wait.
 		workers.Wait()
 		cancelWork()
 		finish()
@@ -155,64 +175,40 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 }
 
-func (c *Consumer) poll(ctx, workCtx context.Context, url string, capacity chan struct{}, workers *sync.WaitGroup) error {
-	release := func(n int) {
-		for i := 0; i < n; i++ {
-			capacity <- struct{}{}
-		}
-	}
+// delivery preserves the queue and visibility budget across channel handoff.
+type delivery struct {
+	queueURL   string
+	message    types.Message
+	receivedAt time.Time
+}
+
+func (c *Consumer) poll(ctx context.Context, url string, messages chan<- delivery) error {
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
-		}
-		reserved := 0
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-capacity:
-			reserved = 1
-		}
-	reserve:
-		for reserved < c.config.maxNumberOfMessages {
-			select {
-			case <-capacity:
-				reserved++
-			default:
-				break reserve
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			release(reserved)
 			return err
 		}
 		receivedAt := time.Now()
 		c.logger.DebugContext(ctx, "polling messages", "operation", "receive", "queue_url", url)
 		result, err := c.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-			QueueUrl: aws.String(url), MaxNumberOfMessages: int32(reserved),
+			QueueUrl: aws.String(url), MaxNumberOfMessages: int32(c.config.maxNumberOfMessages),
 			VisibilityTimeout: int32(c.config.visibilityTimeout / time.Second), WaitTimeSeconds: int32(c.config.waitTime / time.Second),
 			MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll}, MessageAttributeNames: []string{"All"},
 		})
+		if err == nil && (result == nil || len(result.Messages) > c.config.maxNumberOfMessages) {
+			err = errors.New("invalid SQS receive response")
+		}
 		if err != nil {
-			release(reserved)
 			return &OperationError{Operation: "receive", QueueURL: url, Err: err}
 		}
-		if result == nil || len(result.Messages) > reserved {
-			release(reserved)
-			return errors.New("invalid SQS receive response")
-		}
-		release(reserved - len(result.Messages))
-		for i := range result.Messages {
-			if ctx.Err() != nil {
-				release(len(result.Messages) - i)
+		for _, message := range result.Messages {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			select {
+			case messages <- delivery{queueURL: url, message: message, receivedAt: receivedAt}:
+			case <-ctx.Done():
 				return ctx.Err()
 			}
-			message := result.Messages[i]
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				defer release(1)
-				c.handleMessage(workCtx, url, &message, receivedAt)
-			}()
 		}
 	}
 }

@@ -32,12 +32,22 @@ clients and loggers through `ConsumerOptions.Client` and `.Logger`.
 | Assigning `consumer.Client` | `Client` in ConsumerOptions |
 | Assigning `consumer.Logger` | `Logger: *slog.Logger` in ConsumerOptions |
 | Implicit `us-east-1` | Region resolved from SDK sources; configure one if absent. |
-| Unbounded goroutines | `MaxConcurrency`, default 10 across the consumer's queues. |
+| Receive loop | `ReceiveWorkers`, default 1 per queue. Each message runs in its own goroutine without a processing limit. |
 | Automatic SNS recognition | `MessageFormat: gosqs.MessageFormatSNS` |
 
 `MaxNumberOfMessages` now uses `int`. Nil durations select defaults; explicit zero
 is allowed through `gosqs.Duration(0)`. Client injection cannot be combined with
 Region or Endpoint, because those settings would not configure the injected client.
+
+## Removal of MaxConcurrency
+
+`ConsumerOptions.MaxConcurrency` and `DefaultMaxConcurrency` have been removed.
+Remove references to these symbols when upgrading; existing references will fail
+to compile. Configure `ReceiveWorkers` to set concurrent polling per queue (zero
+selects the default of one), and `MaxNumberOfMessages` to set the receive batch
+size. Neither option limits active message handlers: a shared dispatcher starts
+one goroutine per accepted delivery. Applications must account for concurrent
+load on their dependencies and implement idempotent handlers.
 
 ## AWS types and test doubles
 
