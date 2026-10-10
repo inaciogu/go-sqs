@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -109,7 +110,7 @@ func run(c *gosqs.Consumer, ctx context.Context) <-chan error {
 func TestConsumerValidation(t *testing.T) {
 	h := func(context.Context, *gosqs.Message) error { return nil }
 	for _, o := range []gosqs.ConsumerOptions{
-		{}, {QueueName: "q", QueuePrefix: "p"}, {QueueName: "q", MaxConcurrency: -1}, {QueueName: "q", MaxNumberOfMessages: 11},
+		{}, {QueueName: "q", QueuePrefix: "p"}, {QueueName: "q", ReceiveWorkers: -1}, {QueueName: "q", MaxNumberOfMessages: 11},
 		{QueueName: "q", VisibilityTimeout: gosqs.Duration(-time.Second)}, {QueueName: "q", VisibilityTimeout: gosqs.Duration(12*time.Hour + time.Second)},
 		{QueueName: "q", WaitTime: gosqs.Duration(time.Millisecond)}, {QueueName: "q", WaitTime: gosqs.Duration(21 * time.Second)},
 		{QueueName: "q", ShutdownTimeout: gosqs.Duration(-1)}, {QueueName: "q", BackoffMultiplier: .5},
@@ -182,7 +183,7 @@ func TestDiscoveryPaginationAndNoQueues(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{QueuePrefix: "prefix", MaxNumberOfMessages: 1, MaxConcurrency: 2})
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{QueuePrefix: "prefix", MaxNumberOfMessages: 1})
 	done := run(c, ctx)
 	a, b := wait(t, seen), wait(t, seen)
 	require.ElementsMatch(t, []string{"one", "two"}, []string{a, b})
@@ -271,7 +272,7 @@ func TestShutdownTimeoutAndExclusiveRun(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestGlobalConcurrencyAcrossQueues(t *testing.T) {
+func TestParallelProcessingAcrossQueues(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	started := make(chan struct{}, 2)
@@ -307,18 +308,18 @@ func TestGlobalConcurrencyAcrossQueues(t *testing.T) {
 		<-release
 		active.Add(-1)
 		return nil
-	}, gosqs.ConsumerOptions{QueuePrefix: "p", MaxConcurrency: 2, MaxNumberOfMessages: 1})
+	}, gosqs.ConsumerOptions{QueuePrefix: "p", MaxNumberOfMessages: 1})
 	done := run(c, ctx)
 	wait(t, started)
 	wait(t, started)
 	require.Equal(t, int32(2), maxActive.Load())
-	require.Equal(t, int32(2), requests.Load())
+	require.GreaterOrEqual(t, requests.Load(), int32(2))
 	cancel()
 	close(release)
 	require.ErrorIs(t, wait(t, done), context.Canceled)
 }
 
-func TestEmptyAndPartialBatchesReleaseCapacity(t *testing.T) {
+func TestReceiveBatchSizeIndependentOfActiveHandlers(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var calls atomic.Int32
@@ -337,12 +338,12 @@ func TestEmptyAndPartialBatchesReleaseCapacity(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}}
-	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { close(handlerStarted); <-release; return nil }, gosqs.ConsumerOptions{MaxConcurrency: 3})
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { close(handlerStarted); <-release; return nil }, gosqs.ConsumerOptions{})
 	done := run(c, ctx)
 	wait(t, handlerStarted)
-	require.Equal(t, int32(3), wait(t, batchSizes))
-	require.Equal(t, int32(3), wait(t, batchSizes))
-	require.Equal(t, int32(2), wait(t, batchSizes))
+	require.Equal(t, int32(10), wait(t, batchSizes))
+	require.Equal(t, int32(10), wait(t, batchSizes))
+	require.Equal(t, int32(10), wait(t, batchSizes))
 	cancel()
 	close(release)
 	require.ErrorIs(t, wait(t, done), context.Canceled)
@@ -419,7 +420,7 @@ func TestOperationalFailureDoesNotStopConsumption(t *testing.T) {
 		cancel()
 		return nil
 	}
-	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{MaxConcurrency: 1})
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{})
 	require.ErrorIs(t, c.Run(ctx), context.Canceled)
 	require.Equal(t, int32(2), ackCalls.Load())
 }
@@ -502,14 +503,19 @@ func TestPollingFailureDrainsHandlers(t *testing.T) {
 	var calls atomic.Int32
 	ack := make(chan error, 1)
 	f := &fakeClient{receive: func(ctx context.Context, _ *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
-		if calls.Add(1) == 1 {
+		switch calls.Add(1) {
+		case 1:
 			return &sqs.ReceiveMessageOutput{Messages: []types.Message{message("{}")}}, nil
+		case 2:
+			<-started
+			close(pollFailed)
+			return nil, boom
+		default:
+			<-ctx.Done()
+			return nil, ctx.Err()
 		}
-		<-started
-		close(pollFailed)
-		return nil, boom
 	}, delete: func(ctx context.Context, _ *sqs.DeleteMessageInput) error { ack <- ctx.Err(); return nil }}
-	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { close(started); <-release; return nil }, gosqs.ConsumerOptions{MaxConcurrency: 2, MaxNumberOfMessages: 1})
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { close(started); <-release; return nil }, gosqs.ConsumerOptions{ReceiveWorkers: 2, MaxNumberOfMessages: 1})
 	done := run(c, t.Context())
 	wait(t, pollFailed)
 	select {
@@ -566,5 +572,113 @@ func TestErrorCallbackIncludedInShutdownDeadline(t *testing.T) {
 			t.Fatal("callback did not exit")
 		}
 		runtime.Gosched()
+	}
+}
+
+func TestReceiveWorkersPerQueue(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	requests := make(chan string, 6)
+	f := &fakeClient{
+		list: func(context.Context, *sqs.ListQueuesInput) (*sqs.ListQueuesOutput, error) {
+			return &sqs.ListQueuesOutput{QueueUrls: []string{"one", "two"}}, nil
+		},
+		receive: func(ctx context.Context, in *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+			requests <- aws.ToString(in.QueueUrl)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error {
+		t.Error("unexpected handler invocation")
+		return nil
+	}, gosqs.ConsumerOptions{QueuePrefix: "p", ReceiveWorkers: 3})
+	done := run(c, ctx)
+	counts := map[string]int{}
+	for i := 0; i < 6; i++ {
+		counts[wait(t, requests)]++
+	}
+	require.Equal(t, map[string]int{"one": 3, "two": 3}, counts)
+	cancel()
+	require.ErrorIs(t, wait(t, done), context.Canceled)
+}
+
+func TestMessagesProcessIndependentlyAcrossBatches(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	const total = 20
+	started := make(chan string, total)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	var receives, deleted atomic.Int32
+	var mu sync.Mutex
+	processed := map[string]int{}
+	acknowledged := map[string]int{}
+	f := &fakeClient{receive: func(ctx context.Context, in *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		n := receives.Add(1)
+		if n <= 2 {
+			batch := make([]types.Message, 10)
+			for i := range batch {
+				id := fmt.Sprintf("%d-%d", n, i)
+				batch[i] = types.Message{MessageId: aws.String(id), ReceiptHandle: aws.String("receipt-" + id), Body: aws.String(id)}
+			}
+			return &sqs.ReceiveMessageOutput{Messages: batch}, nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}, delete: func(ctx context.Context, in *sqs.DeleteMessageInput) error {
+		if ctx.Err() != nil {
+			t.Error("confirmation context canceled during drainage")
+		}
+		if aws.ToString(in.QueueUrl) != "https://example.com/queue" {
+			t.Error("confirmation lost queue URL")
+		}
+		mu.Lock()
+		acknowledged[aws.ToString(in.ReceiptHandle)]++
+		mu.Unlock()
+		deleted.Add(1)
+		return nil
+	}}
+	c := newConsumer(t, f, func(ctx context.Context, m *gosqs.Message) error {
+		if m.Content != m.Metadata.MessageID || m.Metadata.QueueURL != "https://example.com/queue" {
+			t.Error("dispatcher lost message metadata")
+		}
+		mu.Lock()
+		processed[m.Metadata.MessageID]++
+		mu.Unlock()
+		started <- m.Metadata.MessageID
+		<-release
+		if ctx.Err() != nil {
+			t.Error("handler context canceled during drainage")
+		}
+		return nil
+	}, gosqs.ConsumerOptions{ReceiveWorkers: 1})
+	done := run(c, ctx)
+	// Both batches must start before any handler completes, even with one receiver.
+	seen := map[string]bool{}
+	for i := 0; i < total; i++ {
+		id := wait(t, started)
+		require.False(t, seen[id], "duplicate channel delivery: %s", id)
+		seen[id] = true
+	}
+	require.Zero(t, deleted.Load())
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("Run returned before draining message goroutines")
+	default:
+	}
+	unblock()
+	require.ErrorIs(t, wait(t, done), context.Canceled)
+	require.Equal(t, int32(total), deleted.Load())
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, processed, total)
+	require.Len(t, acknowledged, total)
+	for id := range seen {
+		require.Equal(t, 1, processed[id])
+		require.Equal(t, 1, acknowledged["receipt-"+id])
 	}
 }

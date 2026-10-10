@@ -18,26 +18,29 @@ import (
 // Client and Logger are optional. OnError runs concurrently in message workers and
 // must return promptly. It is included in the shutdown deadline.
 type ConsumerOptions struct {
-	QueueName           string
-	QueuePrefix         string
-	Region              string
-	Endpoint            string
-	Client              QueueClient
-	Logger              *slog.Logger
-	LogLevel            slog.Level
+	QueueName   string
+	QueuePrefix string
+	Region      string
+	Endpoint    string
+	Client      QueueClient
+	Logger      *slog.Logger
+	LogLevel    slog.Level
+	// Telemetry enables metrics and the default OTel log bridge using global providers.
+	Telemetry           bool
 	MaxNumberOfMessages int
-	MaxConcurrency      int
-	VisibilityTimeout   *time.Duration
-	WaitTime            *time.Duration
-	ShutdownTimeout     *time.Duration
-	BackoffMultiplier   float64
-	MessageFormat       MessageFormat
-	OnError             func(context.Context, error)
+	// ReceiveWorkers is the number of concurrent pollers per discovered queue.
+	ReceiveWorkers    int
+	VisibilityTimeout *time.Duration
+	WaitTime          *time.Duration
+	ShutdownTimeout   *time.Duration
+	BackoffMultiplier float64
+	MessageFormat     MessageFormat
+	OnError           func(context.Context, error)
 }
 
 const (
 	DefaultMaxNumberOfMessages = 10
-	DefaultMaxConcurrency      = 10
+	DefaultReceiveWorkers      = 1
 	DefaultVisibilityTimeout   = 30 * time.Second
 	DefaultWaitTime            = 20 * time.Second
 	DefaultShutdownTimeout     = 30 * time.Second
@@ -48,7 +51,7 @@ func Duration(value time.Duration) *time.Duration { return &value }
 
 type consumerConfig struct {
 	queueName, queuePrefix                       string
-	maxNumberOfMessages, maxConcurrency          int
+	maxNumberOfMessages, receiveWorkers          int
 	visibilityTimeout, waitTime, shutdownTimeout time.Duration
 	backoffMultiplier                            float64
 	messageFormat                                MessageFormat
@@ -77,15 +80,15 @@ func NewConsumer(ctx context.Context, handler MessageHandler, options ConsumerOp
 	if options.MaxNumberOfMessages == 0 {
 		options.MaxNumberOfMessages = DefaultMaxNumberOfMessages
 	}
-	if options.MaxConcurrency == 0 {
-		options.MaxConcurrency = DefaultMaxConcurrency
+	if options.ReceiveWorkers == 0 {
+		options.ReceiveWorkers = DefaultReceiveWorkers
 	}
 	if options.BackoffMultiplier == 0 {
 		options.BackoffMultiplier = 2
 	}
 	cfg := consumerConfig{
 		queueName: options.QueueName, queuePrefix: options.QueuePrefix,
-		maxNumberOfMessages: options.MaxNumberOfMessages, maxConcurrency: options.MaxConcurrency,
+		maxNumberOfMessages: options.MaxNumberOfMessages, receiveWorkers: options.ReceiveWorkers,
 		visibilityTimeout: durationOr(options.VisibilityTimeout, DefaultVisibilityTimeout),
 		waitTime:          durationOr(options.WaitTime, DefaultWaitTime),
 		shutdownTimeout:   durationOr(options.ShutdownTimeout, DefaultShutdownTimeout),
@@ -94,8 +97,8 @@ func NewConsumer(ctx context.Context, handler MessageHandler, options ConsumerOp
 	if cfg.maxNumberOfMessages < 1 || cfg.maxNumberOfMessages > 10 {
 		return nil, errors.New("MaxNumberOfMessages must be between 1 and 10")
 	}
-	if cfg.maxConcurrency < 1 {
-		return nil, errors.New("MaxConcurrency must be positive")
+	if cfg.receiveWorkers < 1 {
+		return nil, errors.New("ReceiveWorkers must be positive")
 	}
 	for _, limit := range []struct {
 		name       string
@@ -139,9 +142,21 @@ func NewConsumer(ctx context.Context, handler MessageHandler, options ConsumerOp
 			}
 		})
 	}
+	var telemetry *consumerTelemetry
+	if options.Telemetry {
+		var err error
+		telemetry, err = newConsumerTelemetry(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("initialize telemetry: %w", err)
+		}
+	}
 	log := options.Logger
 	if log == nil {
-		log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: options.LogLevel}))
+		if options.Telemetry {
+			log = telemetryLogger(options.LogLevel)
+		} else {
+			log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: options.LogLevel}))
+		}
 	}
-	return &Consumer{client: client, config: cfg, handler: handler, logger: log}, nil
+	return &Consumer{client: client, config: cfg, handler: handler, logger: log, telemetry: telemetry}, nil
 }
