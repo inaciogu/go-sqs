@@ -1,0 +1,14 @@
+services:
+  lgtm:
+    image: grafana/otel-lgtm@sha256:57c04cbd8e7022f32bb84c4ac005d79baf8b08e2c5be44facf11f5f1f9944ba2
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4318:4318"
+    environment:
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/go-sqs.json
+    volumes:
+      - lgtm-data:/data
+      - ./dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
+      - ./go-sqs.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/go-sqs.json:ro
+volumes:
+  lgtm-data:

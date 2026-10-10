@@ -201,6 +201,9 @@ through `OnError` and returned errors. There are no panic/fatal log operations.
 
 ## OpenTelemetry
 
+For a runnable OTLP/HTTP example, automated export assertions, and an optional
+local Collector and Grafana dashboard, see [`examples/opentelemetry`](examples/opentelemetry/README.md).
+
 Enable built-in metrics and logs with `Telemetry: true`:
 
 ```go
