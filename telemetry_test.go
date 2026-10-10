@@ -102,7 +102,6 @@ func attr(set attribute.Set, key string) string {
 func assertBalanced(t *testing.T, m map[string]metricdata.Metrics) {
 	t.Helper()
 	require.Zero(t, sumMetric(m["gosqs.workers.active"]))
-	require.Zero(t, sumMetric(m["gosqs.capacity.used"]))
 }
 
 func TestTelemetryMessageOutcomes(t *testing.T) {
@@ -192,7 +191,7 @@ func TestTelemetryEmptyPartialAndRedelivery(t *testing.T) {
 		}
 		return nil
 	}
-	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{Telemetry: true, MaxConcurrency: 3})
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{Telemetry: true, ReceiveWorkers: 3})
 	require.ErrorIs(t, c.Run(ctx), context.Canceled)
 	m := collectMetrics(t, reader)
 	require.Equal(t, int64(2), sumMetric(m["messaging.client.consumed.messages"]))
@@ -208,21 +207,20 @@ func TestTelemetryShutdownTracksLateWorkerAndRerun(t *testing.T) {
 	defer cancel()
 	f := &fakeClient{receive: oneMessage(message("{}"))}
 	f.delete = func(context.Context, *sqs.DeleteMessageInput) error { close(ack); return nil }
-	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { close(entered); <-release; return nil }, gosqs.ConsumerOptions{Telemetry: true, MaxConcurrency: 1, ShutdownTimeout: gosqs.Duration(0)})
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error { close(entered); <-release; return nil }, gosqs.ConsumerOptions{Telemetry: true, ReceiveWorkers: 1, ShutdownTimeout: gosqs.Duration(0)})
 	done := run(c, ctx)
 	wait(t, entered)
 	cancel()
 	require.ErrorIs(t, wait(t, done), gosqs.ErrShutdownTimeout)
 	m := collectMetrics(t, reader)
 	require.Equal(t, int64(1), sumMetric(m["gosqs.workers.active"]))
-	require.Equal(t, int64(1), sumMetric(m["gosqs.capacity.used"]))
 	require.Equal(t, int64(1), sumMetric(m["gosqs.errors"]))
 	require.ErrorIs(t, c.Run(t.Context()), gosqs.ErrAlreadyRunning)
 	close(release)
 	wait(t, ack)
 	require.Eventually(t, func() bool {
 		m := collectMetrics(t, reader)
-		return sumMetric(m["gosqs.workers.active"]) == 0 && sumMetric(m["gosqs.capacity.used"]) == 0
+		return sumMetric(m["gosqs.workers.active"]) == 0
 	}, time.Second, time.Millisecond)
 	// Retry after old workers have exited; discovery uses the already-canceled context.
 	require.Eventually(t, func() bool { return !errors.Is(c.Run(ctx), gosqs.ErrAlreadyRunning) }, time.Second, time.Millisecond)
@@ -332,4 +330,44 @@ func TestTelemetryDisabledAndNoop(t *testing.T) {
 	c, err := gosqs.NewConsumer(t.Context(), func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{QueueName: "orders", Client: &fakeClient{}, Telemetry: true})
 	require.NoError(t, err)
 	require.ErrorIs(t, c.Run(ctx), context.Canceled)
+}
+
+// Verify the combined receiver model and telemetry while all handlers overlap.
+func TestTelemetryConcurrentReceivers(t *testing.T) {
+	reader, _ := setupTelemetry(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	const count = 3
+	entered := make(chan struct{}, count)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	var receives atomic.Int32
+	f := &fakeClient{receive: func(ctx context.Context, _ *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		if receives.Add(1) <= count {
+			return &sqs.ReceiveMessageOutput{Messages: []types.Message{message("{}")}}, nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	c := newConsumer(t, f, func(context.Context, *gosqs.Message) error {
+		entered <- struct{}{}
+		<-release
+		return nil
+	}, gosqs.ConsumerOptions{Telemetry: true, ReceiveWorkers: count})
+	done := run(c, ctx)
+	for i := 0; i < count; i++ {
+		wait(t, entered)
+	}
+	metrics := collectMetrics(t, reader)
+	require.Equal(t, int64(count), sumMetric(metrics["gosqs.workers.active"]))
+	require.Equal(t, int64(count), sumMetric(metrics["messaging.client.consumed.messages"]))
+	require.NotContains(t, metrics, "gosqs.capacity.used")
+	cancel()
+	releaseOnce.Do(func() { close(release) })
+	require.ErrorIs(t, wait(t, done), context.Canceled)
+	metrics = collectMetrics(t, reader)
+	assertBalanced(t, metrics)
+	require.Equal(t, uint64(count), histogramCount(metrics["messaging.process.duration"]))
+	require.Zero(t, sumMetric(metrics["gosqs.errors"]))
 }

@@ -21,7 +21,7 @@ func ExampleNewConsumer() {
 			ID string `json:"id"`
 		}
 		return message.Unmarshal(&order)
-	}, gosqs.ConsumerOptions{QueueName: "orders", MaxConcurrency: 10})
+	}, gosqs.ConsumerOptions{QueueName: "orders"})
 	cancelInit()
 	if err != nil {
 		slog.Error("initialize consumer", "error", err)

@@ -126,12 +126,11 @@ func TestOTLPExport(t *testing.T) {
 					}
 				}
 			}
-			require.Len(t, seen, 7)
+			require.Len(t, seen, 6)
 			require.Equal(t, int64(3), sum(seen["messaging.client.consumed.messages"]))
 			require.Equal(t, "{message}", seen["messaging.client.consumed.messages"].Unit)
 			require.Equal(t, int64(1), sum(seen["gosqs.errors"]))
 			require.Zero(t, sum(seen["gosqs.workers.active"]))
-			require.Zero(t, sum(seen["gosqs.capacity.used"]))
 			outcomes := map[string]uint64{}
 			for _, p := range seen["messaging.process.duration"].GetHistogram().DataPoints {
 				outcomes[stringAttr(p.Attributes, "gosqs.handler.result")] += p.Count

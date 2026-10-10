@@ -29,7 +29,7 @@ type consumerTelemetry struct {
 	receivedMessages                                     metric.Int64Counter
 	processDuration, operationDuration, shutdownDuration metric.Float64Histogram
 	errors                                               metric.Int64Counter
-	workers, capacity                                    metric.Int64UpDownCounter
+	workers                                              metric.Int64UpDownCounter
 	base                                                 []attribute.KeyValue
 	prefix                                               bool
 	baseOption                                           metric.MeasurementOption
@@ -59,9 +59,6 @@ func newConsumerTelemetry(cfg consumerConfig) (*consumerTelemetry, error) {
 		return nil, err
 	}
 	if t.workers, err = m.Int64UpDownCounter("gosqs.workers.active", metric.WithUnit("{worker}")); err != nil {
-		return nil, err
-	}
-	if t.capacity, err = m.Int64UpDownCounter("gosqs.capacity.used", metric.WithUnit("{slot}")); err != nil {
 		return nil, err
 	}
 	if t.shutdownDuration, err = m.Float64Histogram("gosqs.shutdown.duration", metric.WithUnit("s")); err != nil {
@@ -172,11 +169,6 @@ func (t *consumerTelemetry) failure(ctx context.Context, q []attribute.KeyValue,
 func (t *consumerTelemetry) workerChange(ctx context.Context, n int64) {
 	if t != nil {
 		t.workers.Add(ctx, n, t.baseOption)
-	}
-}
-func (t *consumerTelemetry) capacityChange(ctx context.Context, n int64) {
-	if t != nil && n != 0 {
-		t.capacity.Add(ctx, n, t.baseOption)
 	}
 }
 func (t *consumerTelemetry) shutdown(ctx context.Context, start time.Time, result string) {

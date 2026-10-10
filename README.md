@@ -1,6 +1,6 @@
 # go-sqs v2
 
-A Go library for consuming Amazon SQS messages with bounded concurrency,
+A Go library for consuming Amazon SQS messages with concurrent receiving,
 explicit payload decoding, and graceful shutdown. Requires Go 1.25 or newer.
 
 ```sh
@@ -34,7 +34,7 @@ func main() {
     initCtx, cancelInit := context.WithTimeout(context.Background(), 5*time.Second)
     consumer, err := gosqs.NewConsumer(initCtx, handleOrder, gosqs.ConsumerOptions{
         QueueName: "orders",
-        MaxConcurrency: 10,
+        ReceiveWorkers: 2,
     })
     cancelInit()
     if err != nil {
@@ -75,7 +75,7 @@ to both when their lifetimes match.
 | `LogLevel` | `slog.LevelInfo` | Filter for the default logger only. |
 | `Telemetry` | `false` | Enable OTel metrics and the default OTel log bridge using application global providers. |
 | `MaxNumberOfMessages` | 10 | Maximum received batch, between 1 and 10. |
-| `MaxConcurrency` | 10 | Global capacity per consumer, including polling reservations and confirmations. |
+| `ReceiveWorkers` | 1 | Concurrent receive workers per queue. Does not limit active message handlers. |
 | `VisibilityTimeout` | 30 seconds | Optional duration; whole seconds from zero to 12 hours. |
 | `WaitTime` | 20 seconds | Optional duration; whole seconds from zero to 20 seconds. |
 | `ShutdownTimeout` | 30 seconds | Optional nonnegative duration for draining work. |
@@ -145,10 +145,19 @@ work may outlive `Run`, and a new call returns `ErrAlreadyRunning` until all old
 workers and pollers exit. Never copy a Consumer after use. Completed consumers can
 be run again; discovery is repeated for each execution.
 
-Capacity is reserved before each receive request, released for empty/partial
-batches, and held through processing and acknowledgement. Prefix queues share
-one capacity pool; long polls also occupy reservations. There is no per-queue
-fairness guarantee. Cancellation interrupts requests and capacity waits.
+`ReceiveWorkers` starts independent pollers per queue; each requests up to
+`MaxNumberOfMessages`. Pollers send deliveries to a shared, unbuffered channel.
+A single dispatcher consumes the channel and starts a new goroutine for every
+message. Each goroutine handles decode, the handler, error callbacks and
+confirmation independently; it does not wait for other messages or batches.
+
+There is no configured limit on active message goroutines. The channel
+synchronizes handoff but does not bound accumulated processing or downstream
+load. `ReceiveWorkers` limits concurrent polling requests only. Cancellation
+interrupts receive requests and channel sends. Messages not handed off remain
+in SQS and become available again after visibility expires. Accepted deliveries
+are drained after the receivers and dispatcher stop. There is no per-queue
+fairness guarantee. Waiting for handoff consumes the message visibility timeout.
 
 Handlers must finish within the configured visibility timeout. Visibility is not
 automatically renewed. The consumer does not guarantee FIFO processing order:
@@ -160,7 +169,7 @@ that tolerate concurrent, idempotent processing.
 ```go
 consumer, err := gosqs.NewConsumer(initCtx, handler, gosqs.ConsumerOptions{
     QueuePrefix: "orders-",
-    MaxConcurrency: 20, // Shared across all matching queues, not 20 per queue.
+    ReceiveWorkers: 2, // Two independent receive workers per queue.
 })
 ```
 
@@ -170,7 +179,7 @@ For different queue handlers, construct separate consumers and use:
 err := gosqs.RunAll(runCtx, orderConsumer, paymentConsumer)
 ```
 
-Each consumer has its own concurrency limit. An error cancels sibling polling;
+Each consumer has its own receivers and dispatcher. An error cancels sibling polling;
 `RunAll` waits for their drainage and aggregates shutdown failures with the
 initiating error.
 
@@ -296,7 +305,6 @@ trace context from messages in this release.
 | `messaging.client.operation.duration` | Histogram / `s` | ReceiveMessage, DeleteMessage and ChangeMessageVisibility calls, including SDK retries. |
 | `gosqs.errors` | Counter / `{error}` | Each decode, handler, SQS, discovery or shutdown failure once. |
 | `gosqs.workers.active` | UpDownCounter / `{worker}` | Workers including decode, handler, confirmation and `OnError`. |
-| `gosqs.capacity.used` | UpDownCounter / `{slot}` | Capacity reserved by polls or workers; long polling also occupies slots. |
 | `gosqs.shutdown.duration` | Histogram / `s` | Drain duration up to completion or timeout; `gosqs.shutdown.result=complete|timeout`. |
 
 Messaging histogram boundaries in seconds are

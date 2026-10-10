@@ -112,7 +112,7 @@ func runFor(parent context.Context, duration time.Duration) (result error) {
 		default:
 			return nil
 		}
-	}, gosqs.ConsumerOptions{QueueName: "otel-demo", Client: client, Telemetry: true, LogLevel: slog.LevelDebug, MaxConcurrency: 1})
+	}, gosqs.ConsumerOptions{QueueName: "otel-demo", Client: client, Telemetry: true, LogLevel: slog.LevelDebug, ReceiveWorkers: 1})
 	if err != nil {
 		return err
 	}
