@@ -126,22 +126,18 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if workCtx.Err() != nil {
 				continue
 			}
-			workers.Add(1)
-			go func(message delivery) {
-				defer workers.Done()
+			workers.Go(func() {
 				c.handleMessage(workCtx, message.queueURL, &message.message, message.receivedAt)
-			}(message)
+			})
 		}
 	}()
 	pollCount := len(urls) * c.config.receiveWorkers
 	errs := make(chan error, pollCount)
-	polls.Add(pollCount)
 	for _, url := range urls {
-		for i := 0; i < c.config.receiveWorkers; i++ {
-			go func(url string) {
-				defer polls.Done()
+		for range c.config.receiveWorkers {
+			polls.Go(func() {
 				errs <- c.poll(pollCtx, url, messages)
-			}(url)
+			})
 		}
 	}
 	var cause error
@@ -157,7 +153,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	go func() {
 		polls.Wait() // Only the receivers write to messages.
 		close(messages)
-		<-dispatchDone // No more workers.Add calls can race with workers.Wait.
+		<-dispatchDone // No more workers.Go calls can race with workers.Wait.
 		workers.Wait()
 		cancelWork()
 		finish()

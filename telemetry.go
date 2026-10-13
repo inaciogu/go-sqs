@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -80,7 +81,7 @@ func (t *consumerTelemetry) queue(rawURL string) []attribute.KeyValue {
 	if value, ok := t.queues.Load(rawURL); ok {
 		return value.([]attribute.KeyValue)
 	}
-	attrs := append([]attribute.KeyValue(nil), t.base...)
+	attrs := slices.Clone(t.base)
 	if u, err := url.Parse(rawURL); err == nil {
 		if host := u.Hostname(); host != "" {
 			attrs = append(attrs, attribute.String("server.address", host))

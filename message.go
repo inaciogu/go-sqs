@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -48,9 +49,7 @@ func NewMessage(raw *types.Message) *Message {
 	m.Content = aws.ToString(raw.Body)
 	m.Metadata.MessageID = aws.ToString(raw.MessageId)
 	m.Metadata.ReceiptHandle = aws.ToString(raw.ReceiptHandle)
-	for k, v := range raw.Attributes {
-		m.Metadata.SystemAttributes[k] = v
-	}
+	maps.Copy(m.Metadata.SystemAttributes, raw.Attributes)
 	for k, v := range raw.MessageAttributes {
 		attr := Attribute{DataType: aws.ToString(v.DataType), BinaryValue: append([]byte(nil), v.BinaryValue...)}
 		if v.StringValue != nil {
@@ -97,9 +96,7 @@ func unwrapSNS(m *Message) error {
 	}
 	m.Content = *envelope.Message
 	// Preserve SQS custom attributes, with SNS payload attributes taking precedence.
-	for k, v := range attributes {
-		m.Metadata.MessageAttributes[k] = v
-	}
+	maps.Copy(m.Metadata.MessageAttributes, attributes)
 	return nil
 }
 
