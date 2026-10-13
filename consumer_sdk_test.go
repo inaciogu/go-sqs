@@ -15,6 +15,11 @@ import (
 )
 
 func TestRunCancelsSDKPolling(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(configFile, []byte("[default]\nregion = us-east-1\n"), 0600))
+	t.Setenv("AWS_PROFILE", "default")
+	t.Setenv("AWS_CONFIG_FILE", configFile)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", configFile)
 	t.Setenv("AWS_ACCESS_KEY_ID", "test")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
 	t.Setenv("AWS_SESSION_TOKEN", "")

@@ -11,14 +11,14 @@ Execute da raiz do repositório. Pare o Collector do exemplo anterior se ele
 estiver ocupando a porta 4318.
 
 ```sh
-rtk docker compose -p go-sqs-local-grafana -f examples/opentelemetry/grafana/compose.yaml up -d
-rtk docker compose -p go-sqs-local-grafana -f examples/opentelemetry/grafana/compose.yaml logs --tail=40
+docker compose -p go-sqs-local-grafana -f examples/opentelemetry/grafana/compose.yaml up -d
+docker compose -p go-sqs-local-grafana -f examples/opentelemetry/grafana/compose.yaml logs --tail=40
 ```
 
 Quando a stack estiver pronta, execute o consumer por 30 minutos:
 
 ```sh
-rtk proxy env OTEL_SERVICE_NAME=go-sqs-local OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=local,service.version=workspace OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_METRIC_EXPORT_INTERVAL=2000 OTEL_BLRP_SCHEDULE_DELAY=1000 rtk go run ./examples/opentelemetry -duration=30m
+env OTEL_SERVICE_NAME=go-sqs-local OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=local,service.version=workspace OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_METRIC_EXPORT_INTERVAL=2000 OTEL_BLRP_SCHEDULE_DELAY=1000 go run ./examples/opentelemetry -duration=30m
 ```
 
 Ctrl+C encerra o consumer, drena os workers e exporta os dados pendentes.
@@ -44,7 +44,7 @@ no backend; a biblioteca continua emitindo seu contrato OpenTelemetry original.
 ## Encerrar e remover
 
 ```sh
-rtk docker compose -p go-sqs-local-grafana -f examples/opentelemetry/grafana/compose.yaml down
+docker compose -p go-sqs-local-grafana -f examples/opentelemetry/grafana/compose.yaml down
 ```
 
 Os dados são preservados no volume Docker `lgtm-data`. Para apagar os dados

@@ -69,7 +69,7 @@ to both when their lifetimes match.
 | --- | --- | --- |
 | `QueueName` / `QueuePrefix` | Required | Set exactly one. Prefix discovery happens once per Run. |
 | `Region` | SDK configuration | An explicit value overrides environment/profile configuration. |
-| `Endpoint` | AWS endpoint | Custom SQS base endpoint, such as LocalStack. |
+| `Endpoint` | AWS endpoint | Custom SQS base endpoint, such as a local emulator. |
 | `Client` | SDK v2 SQS client | Injection skips AWS loading; cannot combine with Region or Endpoint. |
 | `Logger` | JSON slog logger on stderr | An injected logger keeps its own filters and handler. |
 | `LogLevel` | `slog.LevelInfo` | Filter for the default logger only. |
@@ -344,20 +344,39 @@ not by the consumer's `OnError` callback.
 
 ## Local development and validation
 
-```sh
-docker compose up
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 go run ./your-app
-```
-
-Use `Region: "us-east-1"` and `Endpoint: "http://localhost:4566"` in the local
-consumer configuration. The compose setup provisions SQS queues and SNS
-subscriptions through Terraform; clients on the host use the published port.
+The default tests use synchronized clients and a local HTTP server for SDK
+integration. They do not require Docker, credentials, or an AWS account:
 
 ```sh
 go test -race ./...
 go vet ./...
 ```
 
-Tests use synchronized clients and a local HTTP server for SDK integration,
-without requiring an AWS account. See [MIGRATING.md](MIGRATING.md) for v1 migration.
+For examples and service integration tests, start the pinned MiniStack image.
+Only SQS and SNS are enabled, with in-memory state and no account or license key:
+
+```sh
+docker compose up -d
+go run ./examples/basic
+go run ./examples/sns
+go run ./examples/sns -raw
+go test -race -tags=integration -count=1 -timeout=2m ./...
+docker compose down
+```
+
+The examples send three JSON messages, consume them, drain acknowledgements,
+and remove their resources. The SNS example publishes through a topic; `-raw`
+demonstrates raw delivery with the default SQS message format. Processing order
+can vary. All local clients explicitly use fake credentials and `us-east-1`,
+bypassing your AWS profiles. Both examples and integration tests accept
+`SQS_TEST_ENDPOINT` (default `http://localhost:4566`) for SQS and SNS.
+
+Integration tests cover acknowledgements, retry/redelivery, attributes, prefix
+discovery, cancellation, drainage, and SNS delivery. MiniStack 1.5.22 loses Binary
+attributes when building SNS envelopes, so SNS Binary decoding is tested with a
+valid envelope sent directly to SQS. String/Number envelopes and raw delivery are
+tested through SNS; the library does not compensate for the emulator's behavior.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, endpoint overrides and
+troubleshooting, and [MIGRATING.md](MIGRATING.md) for v1 migration.
 The library uses the MIT license.

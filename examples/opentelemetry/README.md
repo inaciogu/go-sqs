@@ -11,7 +11,7 @@ for the automated tests. The example creates no spans.
 From the repository root:
 
 ```sh
-rtk go test -race -count=1 -v ./examples/opentelemetry
+go test -race -count=1 -v ./examples/opentelemetry
 ```
 
 Tests run the same example against an HTTP server on a random loopback port,
@@ -49,10 +49,10 @@ For local charts and searchable logs, see the optional
 From the repository root:
 
 ```sh
-rtk docker compose -p go-sqs-otel-example -f examples/opentelemetry/compose.yaml up -d
-rtk proxy env OTEL_SERVICE_NAME=go-sqs-otel-example OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=local,service.version=example OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 rtk go run ./examples/opentelemetry
-rtk docker compose -p go-sqs-otel-example -f examples/opentelemetry/compose.yaml logs --no-color collector
-rtk docker compose -p go-sqs-otel-example -f examples/opentelemetry/compose.yaml down
+docker compose -p go-sqs-otel-example -f examples/opentelemetry/compose.yaml up -d
+env OTEL_SERVICE_NAME=go-sqs-otel-example OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=local,service.version=example OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 go run ./examples/opentelemetry
+docker compose -p go-sqs-otel-example -f examples/opentelemetry/compose.yaml logs --no-color collector
+docker compose -p go-sqs-otel-example -f examples/opentelemetry/compose.yaml down
 ```
 
 Wait for the Collector to report that it is ready before running the example.

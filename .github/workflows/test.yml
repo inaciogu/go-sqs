@@ -22,3 +22,24 @@ jobs:
         run: go test -race -v ./...
       - name: Vet
         run: go vet ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25.x'
+      - name: Install dependencies
+        run: go mod download
+      - name: Start MiniStack
+        run: docker compose up -d
+      - name: Run integration tests
+        run: go test -race -tags=integration -count=1 -timeout=2m ./...
+      - name: MiniStack logs
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+      - name: Stop MiniStack
+        if: always()
+        run: docker compose down
