@@ -69,7 +69,7 @@ to both when their lifetimes match.
 | --- | --- | --- |
 | `QueueName` / `QueuePrefix` | Required | Set exactly one. Prefix discovery happens once per Run. |
 | `Region` | SDK configuration | An explicit value overrides environment/profile configuration. |
-| `Endpoint` | AWS endpoint | Custom SQS base endpoint, such as LocalStack. |
+| `Endpoint` | AWS endpoint | Custom SQS base endpoint, such as a local emulator. |
 | `Client` | SDK v2 SQS client | Injection skips AWS loading; cannot combine with Region or Endpoint. |
 | `Logger` | JSON slog logger on stderr | An injected logger keeps its own filters and handler. |
 | `LogLevel` | `slog.LevelInfo` | Filter for the default logger only. |
@@ -344,20 +344,44 @@ not by the consumer's `OnError` callback.
 
 ## Local development and validation
 
-```sh
-docker compose up
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 go run ./your-app
-```
-
-Use `Region: "us-east-1"` and `Endpoint: "http://localhost:4566"` in the local
-consumer configuration. The compose setup provisions SQS queues and SNS
-subscriptions through Terraform; clients on the host use the published port.
+Fast checks run without Docker or an AWS account:
 
 ```sh
 go test -race ./...
 go vet ./...
 ```
 
-Tests use synchronized clients and a local HTTP server for SDK integration,
-without requiring an AWS account. See [MIGRATING.md](MIGRATING.md) for v1 migration.
-The library uses the MIT license.
+For manual exploration, start MiniStack and provision named example resources:
+
+```sh
+docker compose up -d
+go run ./examples/setup
+go run ./examples/basic
+```
+
+In another terminal, publish orders with `go run ./examples/publish -target sqs`.
+Consumers run until Ctrl+C, drain active work, and preserve resources for the next
+run. SNS envelope/raw consumers and a real SQS OpenTelemetry consumer are also
+available. See [examples/README.md](examples/README.md) for complete recipes,
+traffic generation, endpoint configuration, and explicit cleanup.
+
+Automated integration uses isolated temporary resources and the real AWS SDK:
+
+```sh
+go test -race -tags=integration -count=1 -timeout=2m ./...
+```
+
+These tests cover acknowledgements, retry/redelivery, attributes, prefix discovery,
+cancellation, drainage, and SNS delivery. MiniStack 1.5.22 loses Binary attributes
+in SNS envelopes; binary decoding is tested with a valid envelope sent directly
+to SQS. The library does not compensate for that emulator behavior.
+
+After stopping consumers and publishers:
+
+```sh
+go run ./examples/setup -cleanup
+docker compose down
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and troubleshooting, and
+[MIGRATING.md](MIGRATING.md) for migration. The library uses the MIT license.

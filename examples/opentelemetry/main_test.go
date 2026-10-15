@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// These tests use the same providers, exporters and scenario as go run.
+// These tests use the same handler, providers and exporters as go run, with a test-only SQS client.
 // They assert the decoded wire payload, rather than SDK objects in memory.
 func TestOTLPExport(t *testing.T) {
 	for _, specific := range []bool{false, true} {

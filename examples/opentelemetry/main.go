@@ -1,7 +1,8 @@
-// This example exercises real OTLP/HTTP export with a deterministic SQS client.
+// This example consumes real SQS messages and exports OTLP/HTTP logs and metrics.
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -9,13 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	gosqs "github.com/inaciogu/go-sqs/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -27,7 +27,8 @@ import (
 )
 
 func main() {
-	duration := flag.Duration("duration", 0, "generate continuous traffic for this duration (e.g. 30m); zero sends three messages")
+	duration := flag.Duration("duration", 0, "stop after this duration; zero runs until Ctrl+C")
+	queue := flag.String("queue", "example-otel", "queue provisioned by examples/setup")
 	flag.Parse()
 	if *duration < 0 {
 		fmt.Fprintln(os.Stderr, "duration must be nonnegative")
@@ -35,11 +36,15 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runFor(ctx, *duration); err != nil {
+	endpoint := cmp.Or(os.Getenv("SQS_TEST_ENDPOINT"), "http://localhost:4566")
+	client := sqs.NewFromConfig(aws.Config{
+		Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	}, func(o *sqs.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	if err := runConsumer(ctx, client, *queue, *duration); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println("Consumer drained; OTLP logs and metrics exported. Inspect the Collector output.")
+	fmt.Println("Consumer drained; OTLP logs and metrics exported.")
 }
 
 // No endpoint/header options: the exporters read their standard OTEL_* variables.
@@ -68,113 +73,85 @@ func initTelemetry(ctx context.Context) (func(context.Context) error, error) {
 	}, nil
 }
 
-func run(parent context.Context) (result error) {
-	return runFor(parent, 0)
-}
-
-func runFor(parent context.Context, duration time.Duration) (result error) {
-	continuous := duration > 0
-	if !continuous {
-		duration = 10 * time.Second
+// Application providers must outlive consumer drainage and acknowledgement.
+func runConsumer(parent context.Context, client gosqs.QueueClient, queue string, duration time.Duration) (result error) {
+	ctx := parent
+	if duration > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeout(parent, duration)
+		defer stop()
 	}
-	ctx, stop := context.WithTimeout(parent, duration)
-	defer stop()
-	shutdown, err := initTelemetry(ctx)
+	initCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	shutdown, err := initTelemetry(initCtx)
 	if err != nil {
+		cancel()
 		return err
 	}
 	defer func() {
-		// The consumer has joined its workers before the providers are shut down.
-		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		flushCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
 		result = errors.Join(result, shutdown(flushCtx))
 	}()
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	client := &demoClient{cancel: cancel, continuous: continuous}
-	consumer, err := gosqs.NewConsumer(ctx, func(ctx context.Context, m *gosqs.Message) error {
-		if continuous {
-			// Vary processing duration so the real library histogram has a distribution.
-			delay := map[string]time.Duration{"success": 50 * time.Millisecond, "drop": 150 * time.Millisecond, "retry": 300 * time.Millisecond}[m.Content]
-			timer := time.NewTimer(delay)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-		switch m.Content {
-		case "drop":
-			return gosqs.ErrDrop
-		case "retry":
-			return errors.New("example handler failure")
-		default:
-			return nil
-		}
-	}, gosqs.ConsumerOptions{QueueName: "otel-demo", Client: client, Telemetry: true, LogLevel: slog.LevelDebug, ReceiveWorkers: 1})
+	consumer, err := gosqs.NewConsumer(initCtx, handleOrder, gosqs.ConsumerOptions{
+		QueueName: queue, Client: client, Telemetry: true, LogLevel: slog.LevelDebug,
+		WaitTime: gosqs.Duration(time.Second), ShutdownTimeout: gosqs.Duration(5 * time.Second),
+		VisibilityTimeout: gosqs.Duration(5 * time.Second),
+		OnError:           func(ctx context.Context, err error) { fmt.Fprintln(os.Stderr, err) },
+	})
+	cancel()
 	if err != nil {
 		return err
 	}
-	err = consumer.Run(runCtx)
-	if continuous && !errors.Is(err, gosqs.ErrShutdownTimeout) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
-		return nil
-	}
-	if ctx.Err() != nil {
-		return errors.Join(err, ctx.Err())
-	}
-	if errors.Is(err, gosqs.ErrShutdownTimeout) || !errors.Is(err, context.Canceled) {
+	fmt.Printf("Consuming %s; publish with go run ./examples/publish -target otel. Ctrl+C drains and flushes.\n", queue)
+	err = consumer.Run(ctx)
+	if errors.Is(err, gosqs.ErrShutdownTimeout) {
 		return err
 	}
-	return nil
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	if duration > 0 && parent.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return err
 }
 
-// Only SQS is simulated. Each delivery is settled before cancelling Run.
-type demoClient struct {
-	gosqs.QueueClient
-	mu            sync.Mutex
-	next, settled int
-	cancel        context.CancelFunc
-	continuous    bool
-}
-
-func (*demoClient) GetQueueUrl(context.Context, *sqs.GetQueueUrlInput, ...func(*sqs.Options)) (*sqs.GetQueueUrlOutput, error) {
-	return &sqs.GetQueueUrlOutput{QueueUrl: aws.String("http://localhost/000000000000/otel-demo")}, nil
-}
-func (c *demoClient) ReceiveMessage(ctx context.Context, _ *sqs.ReceiveMessageInput, _ ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
-	if c.continuous {
-		timer := time.NewTimer(500 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
+func handleOrder(ctx context.Context, message *gosqs.Message) error {
+	var order struct {
+		ID     string `json:"id"`
+		Action string `json:"action"`
+	}
+	if err := message.Unmarshal(&order); err != nil {
+		return err
+	}
+	if order.ID == "" {
+		return errors.New("order id is required")
+	}
+	// These optional actions make settlement and real redelivery visible.
+	delay := 50 * time.Millisecond
+	switch order.Action {
+	case "drop":
+		delay = 150 * time.Millisecond
+	case "retry":
+		delay = 300 * time.Millisecond
+	case "", "success":
+	default:
+		return errors.New("unknown action")
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	switch order.Action {
+	case "drop":
+		return gosqs.ErrDrop
+	case "retry":
+		if message.Metadata.SystemAttributes["ApproximateReceiveCount"] == "1" {
+			return errors.New("example handler failure")
 		}
 	}
-	c.mu.Lock()
-	if c.continuous || c.next < 3 {
-		body := []string{"success", "drop", "retry"}[c.next%3]
-		c.next++
-		c.mu.Unlock()
-		return &sqs.ReceiveMessageOutput{Messages: []types.Message{{Body: aws.String(body), MessageId: aws.String(body), ReceiptHandle: aws.String("example-receipt")}}}, nil
-	}
-	c.mu.Unlock()
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-func (c *demoClient) settle() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.settled++
-	if !c.continuous && c.settled == 3 {
-		c.cancel()
-	}
-}
-func (c *demoClient) DeleteMessage(context.Context, *sqs.DeleteMessageInput, ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error) {
-	c.settle()
-	return &sqs.DeleteMessageOutput{}, nil
-}
-func (c *demoClient) ChangeMessageVisibility(context.Context, *sqs.ChangeMessageVisibilityInput, ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error) {
-	c.settle()
-	return &sqs.ChangeMessageVisibilityOutput{}, nil
+	return nil
 }

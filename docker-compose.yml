@@ -1,16 +1,11 @@
-version: '3'
-
 services:
-  localstack:
-    image: localstack/localstack
+  ministack:
+    image: ministackorg/ministack:1.5.22@sha256:0e51461e29524b884306810ce05c8a2e47f90f0c4dddc5a5f52166d2b56c7818
     ports:
-      - "4566:4566"
-  terraform:
-    image: hashicorp/terraform:light
-    volumes:
-      - ./iac/terraform:/terraform
-    working_dir: /terraform
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["terraform init && terraform apply -auto-approve"]
-    depends_on:
-      - localstack
+      - "127.0.0.1:4566:4566"
+    environment:
+      SERVICES: sqs,sns
+      MINISTACK_REGION: us-east-1
+      MINISTACK_ACCOUNT_ID: "000000000000"
+      AUTH: "false"
+      PERSIST_STATE: "0"
