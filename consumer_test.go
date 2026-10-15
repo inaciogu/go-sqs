@@ -494,6 +494,81 @@ func TestExplicitSNSAndDecodeFailure(t *testing.T) {
 	}
 }
 
+func TestSNSAttributeMerge(t *testing.T) {
+	for _, tc := range []struct {
+		name, attributes string
+		emptySQS         bool
+		want             map[string]gosqs.Attribute
+	}{
+		{
+			name:       "SNS overrides collisions and preserves SQS-only attributes",
+			attributes: `,"MessageAttributes":{"shared":{"Type":"String.custom","Value":"sns"},"sns-only":{"Type":"Binary","Value":"aGk="},"ApproximateReceiveCount":{"Type":"Number","Value":"99"}}`,
+			want: map[string]gosqs.Attribute{
+				"shared":                  {DataType: "String.custom", StringValue: aws.String("sns")},
+				"sqs-only":                {DataType: "String", StringValue: aws.String("sqs")},
+				"sns-only":                {DataType: "Binary", BinaryValue: []byte("hi")},
+				"ApproximateReceiveCount": {DataType: "Number", StringValue: aws.String("99")},
+			},
+		},
+		{name: "absent SNS attributes"},
+		{name: "null SNS attributes", attributes: `,"MessageAttributes":null`},
+		{name: "empty SNS attributes", attributes: `,"MessageAttributes":{}`},
+		{
+			name: "SNS attributes with nil SQS attributes", emptySQS: true,
+			attributes: `,"MessageAttributes":{"sns-only":{"Type":"String","Value":"sns"}}`,
+			want:       map[string]gosqs.Attribute{"sns-only": {DataType: "String", StringValue: aws.String("sns")}},
+		},
+		{name: "no attributes from either source", emptySQS: true, want: map[string]gosqs.Attribute{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			raw := message(`{"Type":"Notification","TopicArn":"topic","MessageId":"sns-id","Message":"hello"` + tc.attributes + `}`)
+			if !tc.emptySQS {
+				raw.MessageAttributes = map[string]types.MessageAttributeValue{
+					"shared":   {DataType: aws.String("Binary"), BinaryValue: []byte("original")},
+					"sqs-only": {DataType: aws.String("String"), StringValue: aws.String("sqs")},
+				}
+			}
+			want := tc.want
+			if want == nil {
+				want = map[string]gosqs.Attribute{
+					"shared":   {DataType: "Binary", BinaryValue: []byte("original")},
+					"sqs-only": {DataType: "String", StringValue: aws.String("sqs")},
+				}
+			}
+			seen := make(chan *gosqs.Message, 1)
+			failures := make(chan error, 2)
+			var acknowledged atomic.Bool
+			f := &fakeClient{receive: oneMessage(raw), delete: func(context.Context, *sqs.DeleteMessageInput) error {
+				acknowledged.Store(true)
+				cancel()
+				return nil
+			}}
+			c := newConsumer(t, f, func(_ context.Context, m *gosqs.Message) error {
+				seen <- m
+				return nil
+			}, gosqs.ConsumerOptions{MessageFormat: gosqs.MessageFormatSNS, OnError: func(_ context.Context, err error) {
+				failures <- err
+				cancel()
+			}})
+			require.ErrorIs(t, wait(t, run(c, ctx)), context.Canceled)
+			require.Empty(t, failures)
+			require.True(t, acknowledged.Load())
+			m := wait(t, seen)
+			require.Equal(t, "hello", m.Content)
+			require.NotNil(t, m.Metadata.MessageAttributes)
+			require.Equal(t, want, m.Metadata.MessageAttributes)
+			require.Equal(t, map[string]string{"ApproximateReceiveCount": "3"}, m.Metadata.SystemAttributes)
+			if !tc.emptySQS {
+				require.Equal(t, []byte("original"), raw.MessageAttributes["shared"].BinaryValue)
+				require.Nil(t, raw.MessageAttributes["shared"].StringValue)
+				require.Len(t, raw.MessageAttributes, 2)
+			}
+		})
+	}
+}
+
 // Compile-time check of the SDK-compatible injection contract.
 var _ gosqs.QueueClient = (*fakeClient)(nil)
 
@@ -595,7 +670,7 @@ func TestReceiveWorkersPerQueue(t *testing.T) {
 	}, gosqs.ConsumerOptions{QueuePrefix: "p", ReceiveWorkers: 3})
 	done := run(c, ctx)
 	counts := map[string]int{}
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		counts[wait(t, requests)]++
 	}
 	require.Equal(t, map[string]int{"one": 3, "two": 3}, counts)
@@ -658,7 +733,7 @@ func TestMessagesProcessIndependentlyAcrossBatches(t *testing.T) {
 	done := run(c, ctx)
 	// Both batches must start before any handler completes, even with one receiver.
 	seen := map[string]bool{}
-	for i := 0; i < total; i++ {
+	for range total {
 		id := wait(t, started)
 		require.False(t, seen[id], "duplicate channel delivery: %s", id)
 		seen[id] = true

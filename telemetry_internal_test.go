@@ -86,8 +86,7 @@ func BenchmarkTelemetryHandleMessage(b *testing.B) {
 			// Warm attribute caching outside the measured loop.
 			c.handleMessage(ctx, "https://example.com/orders", raw, receivedAt)
 			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				c.handleMessage(ctx, "https://example.com/orders", raw, receivedAt)
 			}
 		})

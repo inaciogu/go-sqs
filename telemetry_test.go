@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,7 +46,7 @@ func (*memoryLogs) ForceFlush(context.Context) error { return nil }
 func (e *memoryLogs) snapshot() []sdklog.Record {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]sdklog.Record(nil), e.records...)
+	return slices.Clone(e.records)
 }
 func setupTelemetry(t *testing.T) (*sdkmetric.ManualReader, *memoryLogs) {
 	t.Helper()
@@ -356,7 +357,7 @@ func TestTelemetryConcurrentReceivers(t *testing.T) {
 		return nil
 	}, gosqs.ConsumerOptions{Telemetry: true, ReceiveWorkers: count})
 	done := run(c, ctx)
-	for i := 0; i < count; i++ {
+	for range count {
 		wait(t, entered)
 	}
 	metrics := collectMetrics(t, reader)
