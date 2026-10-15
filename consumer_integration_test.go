@@ -4,6 +4,7 @@ package gosqs_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strconv"
@@ -21,6 +22,70 @@ import (
 	"github.com/inaciogu/go-sqs/v2/internal/localdev"
 	"github.com/stretchr/testify/require"
 )
+
+func integrationUniqueName(prefix string) string { return prefix + rand.Text() }
+
+// integrationResources owns only resources created by an integration test.
+type integrationResources struct {
+	Clients         *localdev.Clients
+	QueueName       string
+	QueueURL        string
+	TopicARN        string
+	SubscriptionARN string
+}
+
+func (r *integrationResources) CreateQueue(ctx context.Context, name string) error {
+	queue, err := r.Clients.SQS.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String(name)})
+	if err != nil {
+		return err
+	}
+	r.QueueName, r.QueueURL = name, aws.ToString(queue.QueueUrl)
+	return nil
+}
+
+func (r *integrationResources) Subscribe(ctx context.Context, raw bool) error {
+	topic, err := r.Clients.SNS.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String(integrationUniqueName("it-topic-"))})
+	if err != nil {
+		return err
+	}
+	r.TopicARN = aws.ToString(topic.TopicArn)
+	attrs, err := r.Clients.SQS.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl: aws.String(r.QueueURL), AttributeNames: []types.QueueAttributeName{types.QueueAttributeNameQueueArn},
+	})
+	if err != nil {
+		return err
+	}
+	sub, err := r.Clients.SNS.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn: aws.String(r.TopicARN), Protocol: aws.String("sqs"),
+		Endpoint:   aws.String(attrs.Attributes[string(types.QueueAttributeNameQueueArn)]),
+		Attributes: map[string]string{"RawMessageDelivery": fmt.Sprint(raw)}, ReturnSubscriptionArn: true,
+	})
+	if err != nil {
+		return err
+	}
+	r.SubscriptionARN = aws.ToString(sub.SubscriptionArn)
+	return nil
+}
+
+// Cleanup is independent of cancelled processing contexts and never resets shared state.
+func (r *integrationResources) Cleanup() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var errs []error
+	if r.SubscriptionARN != "" {
+		_, err := r.Clients.SNS.Unsubscribe(ctx, &sns.UnsubscribeInput{SubscriptionArn: aws.String(r.SubscriptionARN)})
+		errs = append(errs, err)
+	}
+	if r.TopicARN != "" {
+		_, err := r.Clients.SNS.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: aws.String(r.TopicARN)})
+		errs = append(errs, err)
+	}
+	if r.QueueURL != "" {
+		_, err := r.Clients.SQS.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(r.QueueURL)})
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
 
 type integrationSettlement struct {
 	queueURL   string
@@ -67,15 +132,15 @@ func integrationContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func integrationQueue(t *testing.T, ctx context.Context, clients *localdev.Clients, name string) *localdev.Resources {
+func integrationQueue(t *testing.T, ctx context.Context, clients *localdev.Clients, name string) *integrationResources {
 	t.Helper()
-	r := &localdev.Resources{Clients: clients}
+	r := &integrationResources{Clients: clients}
 	t.Cleanup(func() { require.NoError(t, r.Cleanup(), "clean up test resources") })
 	require.NoError(t, r.CreateQueue(ctx, name))
 	return r
 }
 
-func integrationSend(t *testing.T, ctx context.Context, r *localdev.Resources, body string, attrs map[string]types.MessageAttributeValue) {
+func integrationSend(t *testing.T, ctx context.Context, r *integrationResources, body string, attrs map[string]types.MessageAttributeValue) {
 	t.Helper()
 	_, err := r.Clients.SQS.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: aws.String(r.QueueURL), MessageBody: aws.String(body), MessageAttributes: attrs})
 	require.NoError(t, err)
@@ -133,7 +198,7 @@ func integrationStop(t *testing.T, ctx context.Context, execution integrationExe
 
 // A two-second long poll crosses the consumer's one-second visibility window.
 // An undeleted message would become visible and be returned during that window.
-func integrationAbsent(t *testing.T, ctx context.Context, r *localdev.Resources) {
+func integrationAbsent(t *testing.T, ctx context.Context, r *integrationResources) {
 	t.Helper()
 	result, err := r.Clients.SQS.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: aws.String(r.QueueURL), WaitTimeSeconds: 2, MaxNumberOfMessages: 1})
 	require.NoError(t, err)
@@ -152,7 +217,7 @@ func TestMiniStack(t *testing.T) {
 	} {
 		t.Run(outcome.name, func(t *testing.T) {
 			ctx := integrationContext(t)
-			r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-outcome-"))
+			r := integrationQueue(t, ctx, clients, integrationUniqueName("it-outcome-"))
 			integrationSend(t, ctx, r, `{"id":"order"}`, nil)
 			client := observeSQS(clients.SQS)
 			messages := make(chan *gosqs.Message, 1)
@@ -168,7 +233,7 @@ func TestMiniStack(t *testing.T) {
 
 	t.Run("retry", func(t *testing.T) {
 		ctx := integrationContext(t)
-		r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-retry-"))
+		r := integrationQueue(t, ctx, clients, integrationUniqueName("it-retry-"))
 		integrationSend(t, ctx, r, "retry me", nil)
 		client := observeSQS(clients.SQS)
 		counts := make(chan string, 4)
@@ -196,7 +261,7 @@ func TestMiniStack(t *testing.T) {
 
 	t.Run("SQS attributes", func(t *testing.T) {
 		ctx := integrationContext(t)
-		r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-attrs-"))
+		r := integrationQueue(t, ctx, clients, integrationUniqueName("it-attrs-"))
 		integrationSend(t, ctx, r, "attributes", map[string]types.MessageAttributeValue{
 			"text":   {DataType: aws.String("String"), StringValue: aws.String("hello")},
 			"number": {DataType: aws.String("Number"), StringValue: aws.String("42")},
@@ -219,7 +284,7 @@ func TestMiniStack(t *testing.T) {
 
 	t.Run("prefix", func(t *testing.T) {
 		ctx := integrationContext(t)
-		prefix := localdev.UniqueName("it-prefix-")
+		prefix := integrationUniqueName("it-prefix-")
 		first := integrationQueue(t, ctx, clients, prefix+"-a")
 		second := integrationQueue(t, ctx, clients, prefix+"-b")
 		integrationSend(t, ctx, first, "a", nil)
@@ -235,14 +300,14 @@ func TestMiniStack(t *testing.T) {
 		}
 		require.Equal(t, map[string]string{first.QueueURL: "a", second.QueueURL: "b"}, bodies)
 		integrationStop(t, ctx, execution)
-		consumer, err := gosqs.NewConsumer(ctx, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{QueuePrefix: localdev.UniqueName("it-missing-"), Client: clients.SQS, Logger: quietLogger()})
+		consumer, err := gosqs.NewConsumer(ctx, func(context.Context, *gosqs.Message) error { return nil }, gosqs.ConsumerOptions{QueuePrefix: integrationUniqueName("it-missing-"), Client: clients.SQS, Logger: quietLogger()})
 		require.NoError(t, err)
 		require.ErrorIs(t, consumer.Run(ctx), gosqs.ErrNoQueues)
 	})
 
 	t.Run("cancel empty polling", func(t *testing.T) {
 		ctx := integrationContext(t)
-		r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-empty-"))
+		r := integrationQueue(t, ctx, clients, integrationUniqueName("it-empty-"))
 		client := observeSQS(clients.SQS)
 		execution := integrationStart(t, ctx, client, func(context.Context, *gosqs.Message) error { return errors.New("unexpected message") }, gosqs.ConsumerOptions{QueueName: r.QueueName})
 		integrationAwait(t, ctx, client.polling)
@@ -253,7 +318,7 @@ func TestMiniStack(t *testing.T) {
 
 	t.Run("drain active handler", func(t *testing.T) {
 		ctx := integrationContext(t)
-		r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-drain-"))
+		r := integrationQueue(t, ctx, clients, integrationUniqueName("it-drain-"))
 		integrationSend(t, ctx, r, "drain", nil)
 		client := observeSQS(clients.SQS)
 		started := make(chan struct{})
@@ -281,7 +346,7 @@ func TestMiniStack(t *testing.T) {
 	for _, raw := range []bool{false, true} {
 		t.Run(fmt.Sprintf("SNS raw=%t", raw), func(t *testing.T) {
 			ctx := integrationContext(t)
-			r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-sns-"))
+			r := integrationQueue(t, ctx, clients, integrationUniqueName("it-sns-"))
 			require.NoError(t, r.Subscribe(ctx, raw))
 			body := `{"id":"sns-order"}`
 			_, err := clients.SNS.Publish(ctx, &sns.PublishInput{TopicArn: aws.String(r.TopicARN), Message: aws.String(body), MessageAttributes: map[string]snstypes.MessageAttributeValue{
@@ -309,7 +374,7 @@ func TestMiniStack(t *testing.T) {
 
 	t.Run("SNS binary envelope via SQS", func(t *testing.T) {
 		ctx := integrationContext(t)
-		r := integrationQueue(t, ctx, clients, localdev.UniqueName("it-sns-binary-"))
+		r := integrationQueue(t, ctx, clients, integrationUniqueName("it-sns-binary-"))
 		// MiniStack 1.5.22 loses BinaryValue when building SNS envelopes. This
 		// valid fixture tests our decoder without adapting it to that behavior.
 		integrationSend(t, ctx, r, `{"Type":"Notification","TopicArn":"arn:aws:sns:us-east-1:000000000000:fixture","MessageId":"fixture-id","Message":"binary","MessageAttributes":{"blob":{"Type":"Binary","Value":"AAH/"}}}`, nil)

@@ -16,8 +16,7 @@ example in `example_test.go` is compiled but is not executed by `go test`.
 
 For local OTLP logs and metrics validation, see
 [`examples/opentelemetry`](examples/opentelemetry/README.md). Its automated wire
-tests run without Docker; an optional Collector lets you inspect received data.
-
+tests run without Docker; the executable consumes real SQS traffic and an optional Collector receives telemetry.
 
 Install Docker with Compose v2 and start the Docker daemon. The Compose service
 uses MiniStack 1.5.22, pinned by its multi-platform digest for AMD64 and ARM64.
@@ -26,27 +25,29 @@ volumes, nested containers, persistent state, sign-ups, or license keys.
 
 ```sh
 docker compose up -d
-go run ./examples/basic
-go run ./examples/sns
-go run ./examples/sns -raw
+go run ./examples/setup
 go test -race -tags=integration -count=1 -timeout=2m ./...
+go run ./examples/setup -cleanup
 docker compose down
 ```
 
-Each example creates its own resources, sends three messages, prints the decoded
-order IDs, waits for confirmations to drain, and removes its queue (plus the SNS
-subscription and topic when applicable). The final line reports successful
-processing and acknowledgement. Message order can vary. Each example has a
-30-second execution deadline and accepts Ctrl+C; drainage and cleanup have
-separate deadlines of five seconds. Failures produce a nonzero exit code.
+Manual examples use stable resources provisioned by `go run ./examples/setup`.
+Consumers stay running until Ctrl+C; publish in another terminal with
+`go run ./examples/publish -target sqs`, `-target sns`, or `-target otel`.
+Stop consumers before explicit cleanup with `go run ./examples/setup -cleanup`.
+See [the example index](examples/README.md) for complete workflows.
+Integration tests continue creating unique temporary resources and removing only
+their own resources automatically.
 
 The local SDK clients use explicit `test/test` credentials and `us-east-1`, so
 missing or invalid AWS profiles do not affect examples or integration tests.
-No AWS CLI or `.env` file is needed. Resource names are unique, and cleanup uses
-an independent context. The suite never calls the emulator's global reset.
+No AWS CLI or `.env` file is needed. Integration resource names are unique, and
+test cleanup uses an independent context. Manual resources have stable names and
+are removed only by explicit cleanup. The suite never resets the emulator.
 
-Both examples and tests wait for successful `ListQueues` and `ListTopics` calls
-for up to 30 seconds. Request attempts have a one-second timeout. The integration
+Setup and integration wait for successful `ListQueues` and `ListTopics` calls
+for up to 30 seconds. SQS/OTel publishers require only SQS. Consumers discover
+their existing queue directly, so provision it before starting. The integration
 build tag is opt-in; if the endpoint is unavailable, tests fail with instructions
 to start MiniStack instead of silently skipping.
 
@@ -73,8 +74,8 @@ docker compose logs --no-color --tail=200
 ```
 
 After a forcibly interrupted process, its temporary resources may remain in
-memory. Restarting the service clears all state; normal executions remove only
-their own resources. `docker compose down` removes the container and its network.
+memory. Restarting the service clears all state; integration tests remove only
+their own resources; manual resources remain until explicit cleanup. `docker compose down` removes the container and its network.
 
 ## Coverage and emulator limitations
 

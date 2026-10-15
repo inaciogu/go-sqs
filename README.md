@@ -344,39 +344,44 @@ not by the consumer's `OnError` callback.
 
 ## Local development and validation
 
-The default tests use synchronized clients and a local HTTP server for SDK
-integration. They do not require Docker, credentials, or an AWS account:
+Fast checks run without Docker or an AWS account:
 
 ```sh
 go test -race ./...
 go vet ./...
 ```
 
-For examples and service integration tests, start the pinned MiniStack image.
-Only SQS and SNS are enabled, with in-memory state and no account or license key:
+For manual exploration, start MiniStack and provision named example resources:
 
 ```sh
 docker compose up -d
+go run ./examples/setup
 go run ./examples/basic
-go run ./examples/sns
-go run ./examples/sns -raw
+```
+
+In another terminal, publish orders with `go run ./examples/publish -target sqs`.
+Consumers run until Ctrl+C, drain active work, and preserve resources for the next
+run. SNS envelope/raw consumers and a real SQS OpenTelemetry consumer are also
+available. See [examples/README.md](examples/README.md) for complete recipes,
+traffic generation, endpoint configuration, and explicit cleanup.
+
+Automated integration uses isolated temporary resources and the real AWS SDK:
+
+```sh
 go test -race -tags=integration -count=1 -timeout=2m ./...
+```
+
+These tests cover acknowledgements, retry/redelivery, attributes, prefix discovery,
+cancellation, drainage, and SNS delivery. MiniStack 1.5.22 loses Binary attributes
+in SNS envelopes; binary decoding is tested with a valid envelope sent directly
+to SQS. The library does not compensate for that emulator behavior.
+
+After stopping consumers and publishers:
+
+```sh
+go run ./examples/setup -cleanup
 docker compose down
 ```
 
-The examples send three JSON messages, consume them, drain acknowledgements,
-and remove their resources. The SNS example publishes through a topic; `-raw`
-demonstrates raw delivery with the default SQS message format. Processing order
-can vary. All local clients explicitly use fake credentials and `us-east-1`,
-bypassing your AWS profiles. Both examples and integration tests accept
-`SQS_TEST_ENDPOINT` (default `http://localhost:4566`) for SQS and SNS.
-
-Integration tests cover acknowledgements, retry/redelivery, attributes, prefix
-discovery, cancellation, drainage, and SNS delivery. MiniStack 1.5.22 loses Binary
-attributes when building SNS envelopes, so SNS Binary decoding is tested with a
-valid envelope sent directly to SQS. String/Number envelopes and raw delivery are
-tested through SNS; the library does not compensate for the emulator's behavior.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, endpoint overrides and
-troubleshooting, and [MIGRATING.md](MIGRATING.md) for v1 migration.
-The library uses the MIT license.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and troubleshooting, and
+[MIGRATING.md](MIGRATING.md) for migration. The library uses the MIT license.

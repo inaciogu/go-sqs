@@ -1,7 +1,7 @@
 {
   "uid": "go-sqs-local",
   "title": "go-sqs · OpenTelemetry local",
-  "description": "Telemetria emitida pelo consumer real da go-sqs; apenas o cliente SQS é simulado.",
+  "description": "Telemetria emitida pelo consumer real da go-sqs consumindo mensagens SQS no MiniStack.",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
